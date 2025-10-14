@@ -98,26 +98,40 @@ setup_stunnel() {
 check_python_deps() {
     log_info "Verificando dependências Python..."
     
-    # Verifica se pip3 está disponível
-    if ! command -v pip3 &> /dev/null; then
-        log_info "Instalando pip3..."
+    # Verifica se python3-venv está disponível
+    if ! python3 -c "import venv" 2>/dev/null; then
+        log_info "Instalando python3-venv..."
         sudo apt-get update
-        sudo apt-get install -y python3-pip
+        sudo apt-get install -y python3-venv python3-full
     fi
+    
+    # Cria ambiente virtual se não existir
+    if [ ! -d "venv" ]; then
+        log_info "Criando ambiente virtual..."
+        python3 -m venv venv
+        log_info "Ambiente virtual criado"
+    fi
+    
+    # Ativa o ambiente virtual
+    source venv/bin/activate
+    log_info "Ambiente virtual ativado"
+    
+    # Atualiza pip no ambiente virtual
+    pip install --upgrade pip
     
     # Instala dependências do requirements.txt se existir
     if [ -f "requirements.txt" ]; then
         log_info "Instalando dependências do requirements.txt..."
-        pip3 install -r requirements.txt
+        pip install -r requirements.txt
         log_info "Dependências instaladas com sucesso"
     else
         log_warn "Arquivo requirements.txt não encontrado"
         log_info "Instalando Flask manualmente..."
-        pip3 install flask
+        pip install flask
     fi
     
     # Verifica se as dependências foram instaladas corretamente
-    if ! python3 -c "import flask" 2>/dev/null; then
+    if ! python -c "import flask" 2>/dev/null; then
         log_error "Falha ao instalar Flask"
         exit 1
     else
@@ -125,12 +139,16 @@ check_python_deps() {
     fi
     
     # Verifica se módulo secrets está disponível (Python 3.6+)
-    if ! python3 -c "import secrets" 2>/dev/null; then
+    if ! python -c "import secrets" 2>/dev/null; then
         log_warn "Módulo secrets não disponível (Python < 3.6)"
         log_warn "Considere atualizar para Python 3.6 ou superior"
     else
         log_info "Módulo secrets disponível"
     fi
+    
+    # Desativa o ambiente virtual
+    deactivate
+    log_info "Ambiente virtual configurado"
 }
 
 # Função para validar configuração
@@ -193,6 +211,13 @@ show_status() {
     log_info "Logs disponíveis em:"
     echo "  - stunnel: /var/log/stunnel4/"
     echo "  - SKIP: /var/log/skip/"
+    
+    log_info "Para iniciar o servidor SKIP:"
+    echo "  1. Ative o ambiente virtual: source venv/bin/activate"
+    echo "  2. Execute o servidor: python skip_server.py"
+    echo "  3. Para desativar o ambiente virtual: deactivate"
+    echo ""
+    log_info "Endpoint HTTPS: https://localhost:443/"
 }
 
 # Execução principal
@@ -210,8 +235,12 @@ main() {
     show_status
     
     log_info "Setup concluído com sucesso!"
-    log_info "Para iniciar o servidor SKIP: python3 skip_server.py"
-    log_info "Endpoint HTTPS: https://localhost:443/"
+    log_info ""
+    log_info "INSTRUÇÕES PARA INICIAR O SERVIDOR:"
+    log_info "1. cd $(pwd)"
+    log_info "2. source venv/bin/activate"
+    log_info "3. python skip_server.py"
+}
 }
 
 # Executa se chamado diretamente
