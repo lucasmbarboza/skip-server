@@ -241,7 +241,7 @@ main() {
     log_info "2. source venv/bin/activate"
     log_info "3. python skip_server.py"
 }
-}
+
 
 # Executa se chamado diretamente
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
