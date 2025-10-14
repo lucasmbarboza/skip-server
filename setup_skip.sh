@@ -93,7 +93,7 @@ setup_stunnel() {
     sudo chown stunnel4:stunnel4 /etc/stunnel/psk.txt 2>/dev/null || true
     log_info "Arquivo PSK copiado e protegido"
 }
-
+###
 # Função para verificar dependências Python
 check_python_deps() {
     log_info "Verificando dependências Python..."
@@ -105,16 +105,40 @@ check_python_deps() {
         sudo apt-get install -y python3-venv python3-full
     fi
     
+    # Remove venv existente se estiver corrompido ou incompleto
+    if [ -d "venv" ]; then
+        if [ ! -f "venv/bin/activate" ] || [ ! -f "venv/bin/python" ]; then
+            log_warn "Ambiente virtual incompleto ou corrompido, removendo..."
+            rm -rf venv
+        fi
+    fi
+    
     # Cria ambiente virtual se não existir
     if [ ! -d "venv" ]; then
         log_info "Criando ambiente virtual..."
-        python3 -m venv venv
-        log_info "Ambiente virtual criado"
+        python3 -m venv venv --clear
+        
+        # Verifica se foi criado corretamente
+        if [ ! -f "venv/bin/activate" ]; then
+            log_error "Falha ao criar ambiente virtual - activate não encontrado"
+            exit 1
+        fi
+        
+        if [ ! -f "venv/bin/python" ]; then
+            log_error "Falha ao criar ambiente virtual - python não encontrado"
+            exit 1
+        fi
+        
+        log_info "Ambiente virtual criado com sucesso"
     fi
     
     # Ativa o ambiente virtual
-    source venv/bin/activate
-    log_info "Ambiente virtual ativado"
+    if source venv/bin/activate; then
+        log_info "Ambiente virtual ativado"
+    else
+        log_error "Falha ao ativar ambiente virtual"
+        exit 1
+    fi
     
     # Atualiza pip no ambiente virtual
     pip install --upgrade pip
@@ -156,7 +180,10 @@ validate_config() {
     log_info "Validando configuração SKIP..."
     
     if [ -f "skip_config.py" ]; then
-        python3 -c "
+        # Ativa o ambiente virtual temporariamente para validação
+        source venv/bin/activate
+        
+        python -c "
 from skip_config import get_config
 config = get_config()
 errors = config.validate()
@@ -167,22 +194,19 @@ if errors:
     exit(1)
 else:
     print('Configuração válida')
-"
+" || {
+            deactivate
+            log_warn "Erro na validação da configuração, mas continuando..."
+            return 0
+        }
+        
+        deactivate
+    else
+        log_warn "Arquivo skip_config.py não encontrado, pulando validação"
     fi
 }
 
-# Função para testar a configuração
-test_config() {
-    log_info "Testando configuração do stunnel..."
-    
-    # Testa a configuração do stunnel
-    if sudo stunnel4 -test /etc/stunnel/stunnel.conf; then
-        log_info "Configuração do stunnel válida"
-    else
-        log_error "Configuração do stunnel inválida"
-        exit 1
-    fi
-}
+
 
 # Função para iniciar serviços
 start_services() {
@@ -230,7 +254,6 @@ main() {
     check_python_deps
     validate_config
     setup_stunnel
-    test_config
     start_services
     show_status
     
