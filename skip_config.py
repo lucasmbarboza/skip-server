@@ -53,6 +53,13 @@ class SKIPConfig:
     SYNC_TIMEOUT = 10  # Timeout para operações de sincronização
     SYNC_PORT = 8443  # Porta para comunicação de sincronização
 
+    # Configurações SSL/TLS para sincronização
+    ALLOW_HTTP_FALLBACK = True  # Permitir fallback HTTP em desenvolvimento
+    SSL_VERIFY_PEER = False  # Verificar certificados SSL dos peers
+    SSL_MIN_VERSION = "TLSv1.2"  # Versão mínima do TLS
+    SSL_MAX_VERSION = "TLSv1.2"  # Versão máxima do TLS
+    SSL_CIPHERS = "DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA"  # Ciphers PSK
+
     # Peers para sincronização (configurar conforme ambiente)
     SYNC_PEERS = [
         # Exemplo de configuração de peer:
