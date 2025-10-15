@@ -11,7 +11,7 @@ class SKIPConfig:
 
     # Configurações básicas do servidor
     HOST = '127.0.0.1'  # Bind interno - TLS terminado pelo stunnel
-    PORT = 8080
+    PORT = 8080  # Porta interna (stunnel faz proxy para 8443)
     DEBUG = False
 
     # Configurações do Key Provider
@@ -41,21 +41,22 @@ class SKIPConfig:
     LOG_FILE = "/var/log/skip/skip_server.log"
 
     # Configurações TLS/Stunnel
-    STUNNEL_ACCEPT_PORT = 443
-    STUNNEL_BACKEND_PORT = PORT
+    STUNNEL_ACCEPT_PORT = 8443  # Porta externa HTTPS (stunnel)
+    STUNNEL_BACKEND_PORT = PORT  # Porta interna HTTP
     PSK_FILE = "psk.txt"
 
     # Configurações de Sincronização entre Key Providers
     SYNC_ENABLED = True
+    SYNC_USE_HTTPS = True  # Usar HTTPS via stunnel (sem certificados válidos)
     SYNC_INTERVAL = 30  # Intervalo de sincronização em segundos
     HEARTBEAT_INTERVAL = 10  # Intervalo de heartbeat em segundos
     MAX_RETRY_ATTEMPTS = 3  # Máximo de tentativas de reconexão
     SYNC_TIMEOUT = 10  # Timeout para operações de sincronização
-    SYNC_PORT = 8443  # Porta para comunicação de sincronização
+    SYNC_PORT = 8443  # Porta para comunicação de sincronização (via stunnel)
 
-    # Configurações SSL/TLS para sincronização
-    ALLOW_HTTP_FALLBACK = True  # Permitir fallback HTTP em desenvolvimento
-    SSL_VERIFY_PEER = False  # Verificar certificados SSL dos peers
+    # Configurações SSL/TLS para sincronização (via stunnel)
+    SSL_VERIFY_PEER = False  # Não verificar certificados (sem certs válidos)
+    SSL_CHECK_HOSTNAME = False  # Não verificar hostname
     SSL_MIN_VERSION = "TLSv1.2"  # Versão mínima do TLS
     SSL_MAX_VERSION = "TLSv1.2"  # Versão máxima do TLS
     SSL_CIPHERS = "DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA"  # Ciphers PSK
@@ -66,7 +67,7 @@ class SKIPConfig:
         # {
         #     "system_id": "KP_QuIIN_Backup",
         #     "endpoint": "192.168.1.100",
-        #     "port": 8443,
+        #     "port": 8443,  # Porta HTTPS via stunnel
         #     "shared_secret": "your_shared_secret_here"
         # }
     ]

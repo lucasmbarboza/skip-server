@@ -309,38 +309,34 @@ class SKIPSynchronizer:
         return await self._send_message_to_peer(peer, message)
 
     async def _send_message_to_peer(self, peer: PeerKP, message: SyncMessage) -> bool:
-        """Envia uma mensagem para um peer via HTTPS"""
-        url = f"https://{peer.endpoint}:{peer.port}/sync"
+        """Envia uma mensagem para um peer via HTTPS (stunnel)"""
+        # Usar HTTPS via stunnel (sem certificados válidos)
+        protocol = "https" if getattr(
+            self.config, 'SYNC_USE_HTTPS', True) else "http"
+        url = f"{protocol}://{peer.endpoint}:{peer.port}/sync"
 
-        # Configurar SSL context para TLS PSK (compatível com RFC SKIP)
-        ssl_context = ssl.create_default_context()
+        # Configurar SSL context para usar HTTPS sem verificação de certificados
+        ssl_context = None
+        connector_kwargs = {}
 
-        # Configurações compatíveis com TLS PSK
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        if protocol == "https":
+            ssl_context = ssl.create_default_context()
+            # Não verificar certificados (desenvolvimento/auto-assinados)
+            ssl_context.check_hostname = getattr(
+                self.config, 'SSL_CHECK_HOSTNAME', False)
+            ssl_context.verify_mode = ssl.CERT_NONE if not getattr(
+                self.config, 'SSL_VERIFY_PEER', False) else ssl.CERT_REQUIRED
 
-        # Forçar TLS 1.2 conforme RFC SKIP
-        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
+            # Configurar versões TLS conforme configuração
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            ssl_context.maximum_version = ssl.TLSVersion.TLSv1_2
 
-        # Configurar ciphers compatíveis com PSK
-        try:
-            # Tentar usar ciphers PSK primeiro, fallback para ciphers padrão
-            ssl_context.set_ciphers(
-                'DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA:ECDHE-RSA-AES256-GCM-SHA384:AES256-GCM-SHA384')
-        except ssl.SSLError:
-            # Se PSK não disponível, usar ciphers seguros padrão
-            ssl_context.set_ciphers(
-                'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-GCM-SHA256')
-            logger.warning(
-                f"PSK ciphers não disponíveis para {peer.system_id}, usando ciphers padrão")
-
-        connector_kwargs = {
-            'ssl': ssl_context,
-            'limit': 10,
-            'ttl_dns_cache': 300,
-            'use_dns_cache': True,
-        }
+            connector_kwargs = {
+                'ssl': ssl_context,
+                'limit': 10,
+                'ttl_dns_cache': 300,
+                'use_dns_cache': True,
+            }
 
         # Retry logic
         for attempt in range(self.max_retry_attempts):
@@ -349,13 +345,13 @@ class SKIPSynchronizer:
                     timeout=aiohttp.ClientTimeout(
                         total=self.sync_timeout,
                         connect=5,
-                        sock_connect=5,
                         sock_read=self.sync_timeout
                     ),
-                    connector=aiohttp.TCPConnector(**connector_kwargs)
+                    connector=aiohttp.TCPConnector(
+                        **connector_kwargs) if connector_kwargs else None
                 ) as session:
 
-                    # Headers adicionais para melhor compatibilidade
+                    # Headers para identificação
                     headers = {
                         "Content-Type": "application/json",
                         "User-Agent": f"SKIP-Sync/{self.config.LOCAL_SYSTEM_ID}",
@@ -374,8 +370,9 @@ class SKIPSynchronizer:
                                 f"Mensagem enviada com sucesso para {peer.system_id}")
                             return True
                         else:
+                            response_text = await response.text()
                             logger.warning(
-                                f"Peer {peer.system_id} retornou status {response.status}: {await response.text()}")
+                                f"Peer {peer.system_id} retornou status {response.status}: {response_text}")
                             return False
 
             except asyncio.TimeoutError:
@@ -383,72 +380,30 @@ class SKIPSynchronizer:
                     f"Timeout ao comunicar com peer {peer.system_id} (tentativa {attempt + 1})")
                 if attempt == self.max_retry_attempts - 1:
                     return False
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                await asyncio.sleep(1 + attempt)  # Simple backoff
 
             except aiohttp.ClientConnectorError as e:
                 logger.warning(
                     f"Erro de conexão com peer {peer.system_id} (tentativa {attempt + 1}): {e}")
                 if attempt == self.max_retry_attempts - 1:
                     return False
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(1 + attempt)
 
             except ssl.SSLError as e:
-                logger.error(f"Erro SSL com peer {peer.system_id}: {e}")
-                if "handshake failure" in str(e).lower():
-                    # Tentar fallback para HTTP em desenvolvimento
-                    if hasattr(self.config, 'ALLOW_HTTP_FALLBACK') and self.config.ALLOW_HTTP_FALLBACK:
-                        logger.warning(
-                            f"Tentando fallback HTTP para {peer.system_id}")
-                        return await self._send_message_http_fallback(peer, message)
-                return False
+                logger.warning(
+                    f"Erro SSL com peer {peer.system_id} (tentativa {attempt + 1}): {e}")
+                if attempt == self.max_retry_attempts - 1:
+                    return False
+                await asyncio.sleep(1 + attempt)
 
             except Exception as e:
                 logger.error(
-                    f"Erro inesperado ao comunicar com peer {peer.system_id} (tentativa {attempt + 1}): {e}")
+                    f"Erro ao comunicar com peer {peer.system_id} (tentativa {attempt + 1}): {e}")
                 if attempt == self.max_retry_attempts - 1:
                     return False
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(1 + attempt)
 
         return False
-
-    async def _send_message_http_fallback(self, peer: PeerKP, message: SyncMessage) -> bool:
-        """Fallback HTTP para desenvolvimento/teste quando HTTPS falha"""
-        url = f"http://{peer.endpoint}:{peer.port}/sync"
-
-        logger.warning(f"Usando fallback HTTP para peer {peer.system_id}")
-
-        try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=self.sync_timeout)
-            ) as session:
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "User-Agent": f"SKIP-Sync/{self.config.LOCAL_SYSTEM_ID}",
-                    "X-SKIP-Version": "1.0",
-                    "X-SKIP-Sender": self.config.LOCAL_SYSTEM_ID,
-                    "X-SKIP-Fallback": "HTTP"
-                }
-
-                async with session.post(
-                    url,
-                    json=asdict(message),
-                    headers=headers
-                ) as response:
-
-                    if response.status == 200:
-                        logger.info(
-                            f"Mensagem enviada via HTTP fallback para {peer.system_id}")
-                        return True
-                    else:
-                        logger.warning(
-                            f"Peer {peer.system_id} retornou status {response.status} via HTTP")
-                        return False
-
-        except Exception as e:
-            logger.error(
-                f"Erro no fallback HTTP para peer {peer.system_id}: {e}")
-            return False
 
     def _encrypt_key(self, key_data: str) -> str:
         """Criptografa uma chave para transmissão"""
