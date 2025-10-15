@@ -61,6 +61,14 @@ class SKIPConfig:
     SSL_MAX_VERSION = "TLSv1.2"  # Versão máxima do TLS
     SSL_CIPHERS = "DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA"  # Ciphers PSK
 
+    # Configurações de Sincronização entre Key Providers
+    MYSQL_ROOT_PASSWORD='your_root_password_here' # **MUDE ESTA SENHA!**
+    MYSQL_DATABASE='my_database_name'            # Nome do seu banco de dados
+    MYSQL_USER='my_user'                         # Nome do usuário do banco de dados
+    MYSQL_PASSWORD='my_user_password_here'  
+    MYSQL_HOST='localhost'                     # Host do banco de dados
+    MYSQL_PORT=3306                            # Porta do banco de dados
+
     # Peers para sincronização (configurar conforme ambiente)
     SYNC_PEERS = [
         # Exemplo de configuração de peer:

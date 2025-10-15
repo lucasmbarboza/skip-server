@@ -2,19 +2,26 @@ from flask import Flask, request, jsonify
 import secrets
 import uuid
 import logging
-import os
-import asyncio
-import threading
 from datetime import datetime, timedelta
 from skip_config import get_config
-from skip_sync import SKIPSynchronizer
 
 # Essa é uma implementação simplificada de um servidor SKIP toda a parte de sincronização de chaves entre os KP deve ser implementada a parte. Por simplicidade as chaves aqui são geradas a biblioteque secrets e armazenadas em memória. Em um ambiente de produção, seria necessário um armazenamento persistente e seguro, além de mecanismos de sincronização entre múltiplos Key Providers.
 
-app = Flask(__name__)
+### passar para o código original
+from models import db, Key  # Importa db e modelo Key
+import sqlalchemy as sa
 
+
+app = Flask(__name__)
 # Carregar configuração
 config = get_config()
+app.config['SQLALCHEMY_DATABASE_URI'] = f'mysql+mysqlconnector://{config.MYSQL_USER}:{config.MYSQL_PASSWORD}@{config.MYSQL_HOST}:{config.MYSQL_PORT}/{config.MYSQL_DATABASE}'
+
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
+
 
 # Configurar logging
 logging.basicConfig(
@@ -23,85 +30,23 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Simulação de dados do Key Provider
-KP_DATA = {
-    "localSystemID": config.LOCAL_SYSTEM_ID,
-    "remoteSystemIDs": config.REMOTE_SYSTEM_IDS,
-    "algorithm": config.TLS_ALGORITHM,
-    "keys": {},  # Storage para as chaves geradas
-    "key_timestamps": {}  # Timestamps para expiração
-}
-
 # Inicializar sincronizador
 synchronizer = None
 sync_loop = None
 
 
-def init_synchronizer():
-    """Inicializa o sistema de sincronização"""
-    global synchronizer, sync_loop
-
-    if not config.SYNC_ENABLED:
-        logger.info("Sincronização desabilitada")
-        return
-
-    try:
-        synchronizer = SKIPSynchronizer(config, KP_DATA)
-
-        # Configurar peers da configuração
-        for peer_config in config.SYNC_PEERS:
-            synchronizer.add_peer(
-                peer_config["system_id"],
-                peer_config["endpoint"],
-                peer_config["port"],
-                peer_config["shared_secret"]
-            )
-
-        # Criar e iniciar loop de sincronização em thread separada
-        def run_sync_loop():
-            sync_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(sync_loop)
-
-            # Iniciar sincronização no contexto do novo event loop
-            sync_loop.run_until_complete(start_sync_tasks())
-
-        async def start_sync_tasks():
-            # Iniciar sincronização usando método assíncrono
-            await synchronizer.async_start_sync()
-            
-            # Manter o loop rodando indefinidamente
-            try:
-                while True:
-                    await asyncio.sleep(1)
-            except asyncio.CancelledError:
-                synchronizer.stop_sync()
-                raise
-
-        sync_thread = threading.Thread(target=run_sync_loop, daemon=True)
-        sync_thread.start()
-
-        logger.info("Sistema de sincronização inicializado")
-
-    except Exception as e:
-        logger.error(f"Erro ao inicializar sincronização: {e}")
-        synchronizer = None
-
-
 def cleanup_expired_keys():
     """Remove chaves expiradas da memória"""
     current_time = datetime.now()
-    expired_keys = []
 
-    for key_id, timestamp in KP_DATA["key_timestamps"].items():
-        if current_time - timestamp > timedelta(seconds=config.KEY_EXPIRY_SECONDS):
-            expired_keys.append(key_id)
-
-    for key_id in expired_keys:
-        if key_id in KP_DATA["keys"]:
-            del KP_DATA["keys"][key_id]
-            logger.info(f"Chave expirada removida: {key_id}")
-        if key_id in KP_DATA["key_timestamps"]:
-            del KP_DATA["key_timestamps"][key_id]
+    try:
+        db.session.query(Key).filter(
+            Key.created_at < current_time - timedelta(seconds=config.KEY_EXPIRY_SECONDS)
+        ).delete()
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Erro ao remover chaves expiradas do banco de dados: {e}")
 
 
 @app.before_request
@@ -138,41 +83,37 @@ def get_new_key():
     """
     Gera uma nova chave e retorna key + keyId conforme RFC SKIP Seção 4.2
     """
-    remote_system_id = request.args.get('remoteSystemID')
-    key_size = int(request.args.get('size', 256))  # Default 256 bits
+ 
+    # Default from config
+    key_size = int(request.args.get('size', config.DEFAULT_KEY_SIZE))
 
-    if not remote_system_id:
-        return jsonify({"error": "remoteSystemID is required"}), 400
+    # Validar tamanho da chave
+    if key_size < config.MIN_KEY_SIZE or key_size > config.MAX_KEY_SIZE:
+        return jsonify({
+            "error": f"Invalid key size. Must be between {config.MIN_KEY_SIZE} and {config.MAX_KEY_SIZE} bits"
+        }), 400
 
-    # Verifica se o remoteSystemID é válido
-    if not _is_valid_remote_system(remote_system_id):
-        return jsonify({"error": "Invalid remoteSystemID"}), 400
-
-    # Gera nova chave e keyId
+    # Gerar chave segura
     key_bytes = secrets.token_bytes(key_size // 8)
     key_hex = key_bytes.hex()
     key_id = uuid.uuid4().hex
 
-    # Verifica limite de chaves armazenadas
-    if len(KP_DATA["keys"]) >= config.MAX_STORED_KEYS:
-        cleanup_expired_keys()
-        if len(KP_DATA["keys"]) >= config.MAX_STORED_KEYS:
-            logger.warning("Limite de chaves armazenadas atingido")
-            return jsonify({"error": "Key storage limit reached"}), 500
+    new_key = Key(
+        key_id=key_id,
+        key=key_hex,
+        remote_system_id=config.LOCAL_SYSTEM_ID,  # Pode ser None
+        size=key_size,
+        created_at=datetime.now()
+    )
+    try:
+        db.session.add(new_key)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Erro ao salvar nova chave: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
-    # Armazena a chave (simulação - em produção seria sincronizada com KP remoto)
-    KP_DATA["keys"][key_id] = {
-        "key": key_hex,
-        "remoteSystemID": remote_system_id,
-        "size": key_size
-    }
-    KP_DATA["key_timestamps"][key_id] = datetime.now()
-
-    # Sincronizar chave com peers se habilitado
-    if synchronizer:
-        synchronizer.sync_key_with_peers(key_id, KP_DATA["keys"][key_id])
-
-    logger.info(f"Nova chave gerada: {key_id} para {remote_system_id}")
+    logger.info(f"Nova chave gerada: {key_id} (size: {key_size})")
 
     response = {
         "keyId": key_id,
@@ -190,30 +131,38 @@ def get_key_by_id(key_id):
     Recupera uma chave específica pelo keyId conforme RFC SKIP Seção 4.2
     """
     remote_system_id = request.args.get('remoteSystemID')
-
     if not remote_system_id:
         return jsonify({"error": "remoteSystemID is required"}), 400
 
+
     # Verifica se a chave existe
-    if key_id not in KP_DATA["keys"]:
-        return jsonify({"error": "Key not found"}), 400
+    try:
+        if db.session.get(Key, key_id) is None:
+            return jsonify({"error": "Key not found"}), 400
 
-    key_data = KP_DATA["keys"][key_id]
+        # key_data = KP_DATA["keys"][key_id]
+        key_record = db.session.get(Key, key_id)
+        response = {
+            "keyId": key_record.key_id,
+            "key": key_record.key,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao recuperar chave: {e}")
+        return jsonify({"error": "Internal server error"}), 500
 
-    # Verifica se o remoteSystemID corresponde
-    if key_data["remoteSystemID"] != remote_system_id:
+    if remote_system_id and key_record.remote_system_id != remote_system_id:
         return jsonify({"error": "Invalid remoteSystemID for this key"}), 400
-
-    response = {
-        "keyId": key_id,
-        "key": key_data["key"]
-    }
+    logger.info(f"Chave recuperada: {key_id}")
 
     # Zeroiza a chave após o uso (conforme RFC)
     if config.ENABLE_KEY_ZEROIZATION:
-        del KP_DATA["keys"][key_id]
-        if key_id in KP_DATA["key_timestamps"]:
-            del KP_DATA["key_timestamps"][key_id]
+        try:
+            db.session.delete(key_record)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Erro ao zeroizar chave: {e}")
+            return jsonify({"error": "Internal server error"}), 500
         logger.info(f"Chave zeroizada: {key_id}")
 
     return jsonify(response), 200  # Endpoint: GET /entropy?minentropy=<bits>
@@ -240,103 +189,6 @@ def get_entropy():
 
     except Exception:
         return jsonify({"error": "Hardware random number generator not available"}), 503
-
-
-# Endpoint: POST /sync (para comunicação entre Key Providers)
-@app.route('/sync', methods=['POST'])
-def handle_sync():
-    """
-    Endpoint para receber mensagens de sincronização de outros Key Providers
-    """
-    if not synchronizer:
-        return jsonify({"error": "Synchronization not enabled"}), 503
-
-    try:
-        message_data = request.get_json()
-        if not message_data:
-            return jsonify({"error": "Invalid JSON data"}), 400
-
-        # Executar processamento assíncrono em thread
-        def process_sync():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(
-                synchronizer.handle_incoming_message(
-                    message_data, request.remote_addr)
-            )
-            loop.close()
-            return result
-
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(process_sync)
-            result = future.result(timeout=10)
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Erro no endpoint de sincronização: {e}")
-        return jsonify({"error": "Internal sync error"}), 500
-
-
-# Endpoint: GET /status/sync
-@app.route('/status/sync', methods=['GET'])
-def get_sync_status():
-    """
-    Retorna status da sincronização entre Key Providers
-    """
-    if not synchronizer:
-        return jsonify({
-            "sync_enabled": False,
-            "message": "Synchronization not enabled"
-        }), 200
-
-    try:
-        status = synchronizer.get_sync_status()
-        return jsonify(status), 200
-    except Exception as e:
-        logger.error(f"Erro ao obter status de sincronização: {e}")
-        return jsonify({"error": "Failed to get sync status"}), 500
-
-
-# Endpoint: GET /status/health
-@app.route('/status/health', methods=['GET'])
-def get_health_status():
-    """
-    Endpoint de health check para monitoramento
-    """
-    try:
-        # Limpar chaves expiradas
-        cleanup_expired_keys()
-
-        # Verificar status básico
-        health_status = {
-            "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
-            "local_system_id": config.LOCAL_SYSTEM_ID,
-            "stored_keys": len(KP_DATA["keys"]),
-            "max_keys": config.MAX_STORED_KEYS,
-            "sync_enabled": config.SYNC_ENABLED
-        }
-
-        # Adicionar informações de sincronização se habilitada
-        if synchronizer:
-            sync_status = synchronizer.get_sync_status()
-            health_status["sync_peers"] = len(sync_status["peers"])
-            health_status["online_peers"] = len([
-                p for p in sync_status["peers"].values()
-                if p["status"] == "online"
-            ])
-
-        return jsonify(health_status), 200
-
-    except Exception as e:
-        logger.error(f"Erro no health check: {e}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }), 500
 
 
 def _is_valid_remote_system(remote_system_id):
@@ -380,19 +232,8 @@ if __name__ == '__main__':
     logger.info(f"Algoritmo TLS: {config.TLS_ALGORITHM}")
     logger.info(f"Sistemas remotos suportados: {config.REMOTE_SYSTEM_IDS}")
 
-    # Inicializar sistema de sincronização
-    init_synchronizer()
-
     # O TLS/PSK é gerenciado pelo stunnel4, então rodamos em modo HTTP normal
     try:
         app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
     except KeyboardInterrupt:
-        logger.info("Parando servidor...")
-        if synchronizer:
-            synchronizer.stop_sync()
-        logger.info("Servidor parado")
-    except Exception as e:
-        logger.error(f"Erro fatal: {e}")
-        if synchronizer:
-            synchronizer.stop_sync()
         exit(1)

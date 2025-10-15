@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  mysql_db:
+    image: mysql:8.0 # Você pode escolher outra versão, como mysql:latest ou mysql:5.7
+    container_name: my_mysql_database
+    environment:
+      MYSQL_ROOT_PASSWORD: your_root_password_here # **MUDE ESTA SENHA!**
+      MYSQL_DATABASE: my_database_name            # Nome do seu banco de dados
+      MYSQL_USER: my_user                         # Nome do usuário do banco de dados
+      MYSQL_PASSWORD: my_user_password_here       # **MUDE ESTA SENHA!**
+    ports:
+      - "3306:3306" # Mapeia a porta 3306 do host para a porta 3306 do contêiner
+    volumes:
+      - mysql_data:/var/lib/mysql # Volume persistente para os dados do MySQL
+      # Opcional: Se você tiver arquivos .sql para inicializar o banco de dados, pode adicioná-los aqui:
+      # - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app_network
+    restart: unless-stopped # Garante que o contêiner reinicie automaticamente, a menos que seja parado manualmente
+
+volumes:
+  mysql_data: # Define o volume nomeado para persistência de dados
+
+networks:
+  app_network: # Define uma rede customizada para os serviços se comunicarem
+    driver: bridge
