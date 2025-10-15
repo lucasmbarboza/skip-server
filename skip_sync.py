@@ -120,13 +120,36 @@ class SKIPSynchronizer:
             logger.info("Sincronização desabilitada")
             return
 
+        try:
+            # Verificar se há um event loop rodando
+            loop = asyncio.get_running_loop()
+            
+            if self._sync_task is None or self._sync_task.done():
+                self._sync_task = loop.create_task(self._sync_loop())
+                logger.info("Tarefa de sincronização iniciada")
+
+            if self._heartbeat_task is None or self._heartbeat_task.done():
+                self._heartbeat_task = loop.create_task(self._heartbeat_loop())
+                logger.info("Tarefa de heartbeat iniciada")
+                
+        except RuntimeError:
+            # Não há event loop rodando, criar tasks será feito externamente
+            logger.warning("Nenhum event loop ativo encontrado para start_sync")
+            pass
+
+    async def async_start_sync(self):
+        """Versão assíncrona de start_sync para uso em event loops"""
+        if not self.sync_enabled:
+            logger.info("Sincronização desabilitada")
+            return
+
         if self._sync_task is None or self._sync_task.done():
             self._sync_task = asyncio.create_task(self._sync_loop())
-            logger.info("Tarefa de sincronização iniciada")
+            logger.info("Tarefa de sincronização iniciada (async)")
 
         if self._heartbeat_task is None or self._heartbeat_task.done():
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-            logger.info("Tarefa de heartbeat iniciada")
+            logger.info("Tarefa de heartbeat iniciada (async)")
 
     def stop_sync(self):
         """Para as tarefas de sincronização"""

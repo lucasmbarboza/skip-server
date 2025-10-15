@@ -62,11 +62,20 @@ def init_synchronizer():
             sync_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(sync_loop)
 
-            # Iniciar sincronização
-            synchronizer.start_sync()
+            # Iniciar sincronização no contexto do novo event loop
+            sync_loop.run_until_complete(start_sync_tasks())
 
-            # Executar loop
-            sync_loop.run_forever()
+        async def start_sync_tasks():
+            # Iniciar sincronização usando método assíncrono
+            await synchronizer.async_start_sync()
+            
+            # Manter o loop rodando indefinidamente
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                synchronizer.stop_sync()
+                raise
 
         sync_thread = threading.Thread(target=run_sync_loop, daemon=True)
         sync_thread.start()
