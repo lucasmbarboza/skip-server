@@ -81,15 +81,15 @@ def get_new_key():
     """
     Gera uma nova chave e retorna key + keyId conforme RFC SKIP Seção 4.2
     """
-    remote_system_id = request.args.get('remoteSystemID')
+    # remote_system_id = request.args.get('remoteSystemID')
     key_size = int(request.args.get('size', 256))  # Default 256 bits
 
-    if not remote_system_id:
-        return jsonify({"error": "remoteSystemID is required"}), 400
+    # if not remote_system_id:
+    #     return jsonify({"error": "remoteSystemID is required"}), 400
 
-    # Verifica se o remoteSystemID é válido
-    if not _is_valid_remote_system(remote_system_id):
-        return jsonify({"error": "Invalid remoteSystemID"}), 400
+    # # Verifica se o remoteSystemID é válido
+    # if not _is_valid_remote_system(remote_system_id):
+    #     return jsonify({"error": "Invalid remoteSystemID"}), 400
 
     # Gera nova chave e keyId
     key_bytes = secrets.token_bytes(key_size // 8)
@@ -106,12 +106,12 @@ def get_new_key():
     # Armazena a chave (simulação - em produção seria sincronizada com KP remoto)
     KP_DATA["keys"][key_id] = {
         "key": key_hex,
-        "remoteSystemID": remote_system_id,
+        "remoteSystemID": config.LOCAL_SYSTEM_ID,
         "size": key_size
     }
     KP_DATA["key_timestamps"][key_id] = datetime.now()
 
-    logger.info(f"Nova chave gerada: {key_id} para {remote_system_id}")
+    logger.info(f"Nova chave gerada: {key_id} para { config.LOCAL_SYSTEM_ID}")
 
     response = {
         "keyId": key_id,
