@@ -45,6 +45,25 @@ class SKIPConfig:
     STUNNEL_BACKEND_PORT = PORT
     PSK_FILE = "psk.txt"
 
+    # Configurações de Sincronização entre Key Providers
+    SYNC_ENABLED = True
+    SYNC_INTERVAL = 30  # Intervalo de sincronização em segundos
+    HEARTBEAT_INTERVAL = 10  # Intervalo de heartbeat em segundos
+    MAX_RETRY_ATTEMPTS = 3  # Máximo de tentativas de reconexão
+    SYNC_TIMEOUT = 10  # Timeout para operações de sincronização
+    SYNC_PORT = 8443  # Porta para comunicação de sincronização
+
+    # Peers para sincronização (configurar conforme ambiente)
+    SYNC_PEERS = [
+        # Exemplo de configuração de peer:
+        # {
+        #     "system_id": "KP_QuIIN_Backup",
+        #     "endpoint": "192.168.1.100",
+        #     "port": 8443,
+        #     "shared_secret": "your_shared_secret_here"
+        # }
+    ]
+
     # Validação de configuração
     @classmethod
     def validate(cls):

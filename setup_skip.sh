@@ -241,7 +241,7 @@ show_status() {
     echo "  2. Execute o servidor: python skip_server.py"
     echo "  3. Para desativar o ambiente virtual: deactivate"
     echo ""
-    log_info "Endpoint HTTPS: https://localhost:443/"
+    log_info "Endpoint HTTPS: https://localhost:8443/"
 }
 
 # Execução principal

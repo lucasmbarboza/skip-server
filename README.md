@@ -19,6 +19,26 @@ Cliente                                    Servidor
 +----------------+                        +----------------+
 ```
 
+## ✨ Nova Funcionalidade: Sincronização entre Key Providers
+
+O servidor SKIP agora inclui um sistema robusto de sincronização entre múltiplos Key Providers, implementando as diretrizes do RFC SKIP para distribuição segura de chaves.
+
+### 🔄 Características da Sincronização
+
+- **Sincronização Automática**: Chaves são automaticamente replicadas entre peers configurados
+- **Heartbeat Monitoring**: Monitoramento contínuo do status dos peers
+- **Criptografia End-to-End**: Todas as comunicações entre KPs são criptografadas
+- **Autenticação HMAC**: Assinatura digital de todas as mensagens
+- **Tolerância a Falhas**: Retry automático e detecção de peers offline
+- **Health Monitoring**: Endpoints dedicados para monitoramento do sistema
+
+### 🛡️ Segurança da Sincronização
+
+- **Chaves Compartilhadas**: Cada peer usa uma chave pré-compartilhada única
+- **Proteção contra Replay**: Validação de timestamp nas mensagens
+- **Criptografia Fernet**: Criptografia simétrica para dados de chave
+- **Zeroização Automática**: Chaves são removidas da memória após uso
+
 ## Endpoints RFC SKIP
 
 ### 1. GET /capabilities
@@ -70,9 +90,53 @@ Retorna entropia aleatória.
 **Resposta:**
 ```json
 {
-    "randomStr": "AD229DFB8A276E74C1F3B6C09349A69FB2FED73C541270663F0E5CBBFB031670",
-    "minentropy": 256
+   "randomStr": "AD229DFB8A276E74C1F3B6C09349A69FB2FED73C541270663F0E5CBBFB031670",
+   "minentropy": 256
 }
+```
+
+## 🔄 Endpoints de Sincronização
+
+### 1. POST /sync
+Endpoint interno para comunicação entre Key Providers.
+
+**Uso:** Recebe mensagens de sincronização de outros KPs (heartbeat, chaves, capabilities)
+
+### 2. GET /status/sync
+Retorna o status da sincronização.
+
+**Resposta:**
+```json
+{
+    "sync_enabled": true,
+    "local_system_id": "KP_QuIIN_Server",
+    "peer_count": 2,
+    "peers": {
+        "KP_QuIIN_Backup": {
+            "endpoint": "192.168.1.100:8443",
+            "status": "online",
+            "last_heartbeat": 1634567890.123
+        }
+    }
+}
+```
+
+### 3. GET /status/health
+Health check com informações de sincronização.
+
+**Resposta:**
+```json
+{
+    "status": "healthy",
+    "timestamp": "2024-10-15T10:30:00",
+    "local_system_id": "KP_QuIIN_Server",
+    "stored_keys": 45,
+    "max_keys": 1000,
+    "sync_enabled": true,
+    "sync_peers": 2,
+    "online_peers": 1
+}
+```
 ```
 
 ## Configuração TLS
@@ -121,6 +185,64 @@ echo "ENABLED=1" | sudo tee /etc/default/stunnel4
 ```bash
 sudo systemctl restart stunnel4
 python3 skip_server.py
+```
+
+## ⚙️ Configuração de Sincronização
+
+### Configuração Básica
+
+Para habilitar sincronização entre Key Providers, edite `skip_config.py`:
+
+```python
+# Habilitar sincronização
+SYNC_ENABLED = True
+SYNC_INTERVAL = 30  # segundos
+HEARTBEAT_INTERVAL = 10  # segundos
+
+# Configurar peers
+SYNC_PEERS = [
+    {
+        "system_id": "KP_QuIIN_Backup",
+        "endpoint": "192.168.1.100",
+        "port": 8443,
+        "shared_secret": "sua_chave_secreta_256_bits"
+    }
+]
+```
+
+### Configuração Avançada
+
+Use o arquivo `skip_sync_config.example.py` como base:
+
+1. **Copie o arquivo de exemplo:**
+```bash
+cp skip_sync_config.example.py skip_sync_config.py
+```
+
+2. **Configure os ambientes:**
+```bash
+export SKIP_SYNC_ENV=production
+```
+
+3. **Defina peers e secrets:**
+   - Cada peer deve ter uma chave compartilhada única
+   - Use chaves de pelo menos 256 bits
+   - Configure endpoints acessíveis
+
+### Testando a Sincronização
+
+Use o script de teste incluído:
+
+```bash
+# Teste básico
+python3 test_skip_sync.py https://localhost:443
+
+# Teste de sincronização entre dois servidores
+python3 test_skip_sync.py https://primary:443 --secondary https://backup:443
+
+# Teste específico
+python3 test_skip_sync.py https://localhost:443 --test sync
+```
 ```
 
 ## Estrutura de Arquivos

@@ -3,8 +3,11 @@ import secrets
 import uuid
 import logging
 import os
+import asyncio
+import threading
 from datetime import datetime, timedelta
 from skip_config import get_config
+from skip_sync import SKIPSynchronizer
 
 # Essa é uma implementação simplificada de um servidor SKIP toda a parte de sincronização de chaves entre os KP deve ser implementada a parte. Por simplicidade as chaves aqui são geradas a biblioteque secrets e armazenadas em memória. Em um ambiente de produção, seria necessário um armazenamento persistente e seguro, além de mecanismos de sincronização entre múltiplos Key Providers.
 
@@ -28,6 +31,51 @@ KP_DATA = {
     "keys": {},  # Storage para as chaves geradas
     "key_timestamps": {}  # Timestamps para expiração
 }
+
+# Inicializar sincronizador
+synchronizer = None
+sync_loop = None
+
+
+def init_synchronizer():
+    """Inicializa o sistema de sincronização"""
+    global synchronizer, sync_loop
+
+    if not config.SYNC_ENABLED:
+        logger.info("Sincronização desabilitada")
+        return
+
+    try:
+        synchronizer = SKIPSynchronizer(config, KP_DATA)
+
+        # Configurar peers da configuração
+        for peer_config in config.SYNC_PEERS:
+            synchronizer.add_peer(
+                peer_config["system_id"],
+                peer_config["endpoint"],
+                peer_config["port"],
+                peer_config["shared_secret"]
+            )
+
+        # Criar e iniciar loop de sincronização em thread separada
+        def run_sync_loop():
+            sync_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(sync_loop)
+
+            # Iniciar sincronização
+            synchronizer.start_sync()
+
+            # Executar loop
+            sync_loop.run_forever()
+
+        sync_thread = threading.Thread(target=run_sync_loop, daemon=True)
+        sync_thread.start()
+
+        logger.info("Sistema de sincronização inicializado")
+
+    except Exception as e:
+        logger.error(f"Erro ao inicializar sincronização: {e}")
+        synchronizer = None
 
 
 def cleanup_expired_keys():
@@ -111,6 +159,10 @@ def get_new_key():
     }
     KP_DATA["key_timestamps"][key_id] = datetime.now()
 
+    # Sincronizar chave com peers se habilitado
+    if synchronizer:
+        synchronizer.sync_key_with_peers(key_id, KP_DATA["keys"][key_id])
+
     logger.info(f"Nova chave gerada: {key_id} para {remote_system_id}")
 
     response = {
@@ -181,6 +233,103 @@ def get_entropy():
         return jsonify({"error": "Hardware random number generator not available"}), 503
 
 
+# Endpoint: POST /sync (para comunicação entre Key Providers)
+@app.route('/sync', methods=['POST'])
+def handle_sync():
+    """
+    Endpoint para receber mensagens de sincronização de outros Key Providers
+    """
+    if not synchronizer:
+        return jsonify({"error": "Synchronization not enabled"}), 503
+
+    try:
+        message_data = request.get_json()
+        if not message_data:
+            return jsonify({"error": "Invalid JSON data"}), 400
+
+        # Executar processamento assíncrono em thread
+        def process_sync():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                synchronizer.handle_incoming_message(
+                    message_data, request.remote_addr)
+            )
+            loop.close()
+            return result
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(process_sync)
+            result = future.result(timeout=10)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Erro no endpoint de sincronização: {e}")
+        return jsonify({"error": "Internal sync error"}), 500
+
+
+# Endpoint: GET /status/sync
+@app.route('/status/sync', methods=['GET'])
+def get_sync_status():
+    """
+    Retorna status da sincronização entre Key Providers
+    """
+    if not synchronizer:
+        return jsonify({
+            "sync_enabled": False,
+            "message": "Synchronization not enabled"
+        }), 200
+
+    try:
+        status = synchronizer.get_sync_status()
+        return jsonify(status), 200
+    except Exception as e:
+        logger.error(f"Erro ao obter status de sincronização: {e}")
+        return jsonify({"error": "Failed to get sync status"}), 500
+
+
+# Endpoint: GET /status/health
+@app.route('/status/health', methods=['GET'])
+def get_health_status():
+    """
+    Endpoint de health check para monitoramento
+    """
+    try:
+        # Limpar chaves expiradas
+        cleanup_expired_keys()
+
+        # Verificar status básico
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "local_system_id": config.LOCAL_SYSTEM_ID,
+            "stored_keys": len(KP_DATA["keys"]),
+            "max_keys": config.MAX_STORED_KEYS,
+            "sync_enabled": config.SYNC_ENABLED
+        }
+
+        # Adicionar informações de sincronização se habilitada
+        if synchronizer:
+            sync_status = synchronizer.get_sync_status()
+            health_status["sync_peers"] = len(sync_status["peers"])
+            health_status["online_peers"] = len([
+                p for p in sync_status["peers"].values()
+                if p["status"] == "online"
+            ])
+
+        return jsonify(health_status), 200
+
+    except Exception as e:
+        logger.error(f"Erro no health check: {e}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }), 500
+
+
 def _is_valid_remote_system(remote_system_id):
     """
     Verifica se o remoteSystemID é válido (suporte a glob patterns)
@@ -222,5 +371,19 @@ if __name__ == '__main__':
     logger.info(f"Algoritmo TLS: {config.TLS_ALGORITHM}")
     logger.info(f"Sistemas remotos suportados: {config.REMOTE_SYSTEM_IDS}")
 
+    # Inicializar sistema de sincronização
+    init_synchronizer()
+
     # O TLS/PSK é gerenciado pelo stunnel4, então rodamos em modo HTTP normal
-    app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+    try:
+        app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)
+    except KeyboardInterrupt:
+        logger.info("Parando servidor...")
+        if synchronizer:
+            synchronizer.stop_sync()
+        logger.info("Servidor parado")
+    except Exception as e:
+        logger.error(f"Erro fatal: {e}")
+        if synchronizer:
+            synchronizer.stop_sync()
+        exit(1)
