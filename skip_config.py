@@ -62,12 +62,12 @@ class SKIPConfig:
     SSL_CIPHERS = "DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA"  # Ciphers PSK
 
     # Configurações de Sincronização entre Key Providers
-    MYSQL_ROOT_PASSWORD='your_root_password_here' # **MUDE ESTA SENHA!**
-    MYSQL_DATABASE='my_database_name'            # Nome do seu banco de dados
-    MYSQL_USER='my_user'                         # Nome do usuário do banco de dados
-    MYSQL_PASSWORD='my_user_password_here'  
-    MYSQL_HOST='localhost'                     # Host do banco de dados
-    MYSQL_PORT=3306                            # Porta do banco de dados
+    MYSQL_ROOT_PASSWORD = 'your_root_password_here'  # **MUDE ESTA SENHA!**
+    MYSQL_DATABASE = 'my_database_name'            # Nome do seu banco de dados
+    MYSQL_USER = 'my_user'                         # Nome do usuário do banco de dados
+    MYSQL_PASSWORD = 'my_user_password_here'
+    MYSQL_HOST = 'localhost'                     # Host do banco de dados
+    MYSQL_PORT = 3306                            # Porta do banco de dados
 
     # Peers para sincronização (configurar conforme ambiente)
     SYNC_PEERS = [
@@ -106,7 +106,7 @@ class SKIPConfig:
         return {
             "entropy": True,
             "key": True,
-            "algorithm": cls.TLS_ALGORITHM,
+            "algorithm": 'pqc',
             "localSystemID": cls.LOCAL_SYSTEM_ID,
             "remoteSystemID": cls.REMOTE_SYSTEM_IDS
         }

@@ -73,7 +73,7 @@ def get_capabilities():
     """
     logger.info("Solicitação de capabilities recebida")
     response = config.get_capabilities_response()
-    return jsonify(response), 200
+    return jsonify(response), 200 , {'charset':'UTF-8'}
 
 # Endpoint: GET /key?remoteSystemID=<id>&size=<bits>
 
@@ -111,7 +111,7 @@ def get_new_key():
     except Exception as e:
         db.session.rollback()
         logger.error(f"Erro ao salvar nova chave: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
 
     logger.info(f"Nova chave gerada: {key_id} (size: {key_size})")
 
@@ -120,7 +120,7 @@ def get_new_key():
         "key": key_hex
     }
 
-    return jsonify(response), 200
+    return jsonify(response), 200  , {'charset':'UTF-8'}
 
 # Endpoint: GET /key/{keyId}?remoteSystemID=<id>
 
@@ -132,13 +132,13 @@ def get_key_by_id(key_id):
     """
     remote_system_id = request.args.get('remoteSystemID')
     if not remote_system_id:
-        return jsonify({"error": "remoteSystemID is required"}), 400
+        return jsonify({"error": "remoteSystemID is required"}), 400  , {'charset':'UTF-8'}
 
 
     # Verifica se a chave existe
     try:
         if db.session.get(Key, key_id) is None:
-            return jsonify({"error": "Key not found"}), 400
+            return jsonify({"error": "Key not found"}), 400  , {'charset':'UTF-8'}
 
         # key_data = KP_DATA["keys"][key_id]
         key_record = db.session.get(Key, key_id)
@@ -148,10 +148,10 @@ def get_key_by_id(key_id):
         }
     except Exception as e:
         logger.error(f"Erro ao recuperar chave: {e}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
 
     if remote_system_id and key_record.remote_system_id != remote_system_id:
-        return jsonify({"error": "Invalid remoteSystemID for this key"}), 400
+        return jsonify({"error": "Invalid remoteSystemID for this key"}), 400  , {'charset':'UTF-8'}
     logger.info(f"Chave recuperada: {key_id}")
 
     # Zeroiza a chave após o uso (conforme RFC)
@@ -162,7 +162,7 @@ def get_key_by_id(key_id):
         except Exception as e:
             db.session.rollback()
             logger.error(f"Erro ao zeroizar chave: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
         logger.info(f"Chave zeroizada: {key_id}")
 
     return jsonify(response), 200  # Endpoint: GET /entropy?minentropy=<bits>
@@ -185,7 +185,7 @@ def get_entropy():
             "minentropy": min_entropy
         }
 
-        return jsonify(response), 200
+        return jsonify(response), 200  , {'charset':'UTF-8'}
 
     except Exception:
         return jsonify({"error": "Hardware random number generator not available"}), 503
@@ -211,12 +211,12 @@ def _is_valid_remote_system(remote_system_id):
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"error": "Endpoint not found"}), 404
+    return jsonify({"error": "Endpoint not found"}), 404  , {'charset':'UTF-8'}
 
 
 @app.errorhandler(405)
 def method_not_allowed(error):
-    return jsonify({"error": "Method not allowed. Only GET is supported"}), 405
+    return jsonify({"error": "Method not allowed. Only GET is supported"}), 405  , {'charset':'UTF-8'}
 
 
 if __name__ == '__main__':
