@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 import secrets
 import uuid
 import logging
@@ -7,7 +7,7 @@ from skip_config import get_config
 
 # Essa é uma implementação simplificada de um servidor SKIP toda a parte de sincronização de chaves entre os KP deve ser implementada a parte. Por simplicidade as chaves aqui são geradas a biblioteque secrets e armazenadas em memória. Em um ambiente de produção, seria necessário um armazenamento persistente e seguro, além de mecanismos de sincronização entre múltiplos Key Providers.
 
-### passar para o código original
+# passar para o código original
 from models import db, Key  # Importa db e modelo Key
 import sqlalchemy as sa
 
@@ -35,18 +35,29 @@ synchronizer = None
 sync_loop = None
 
 
+def json_response(data, status_code=200):
+    """
+    Cria resposta JSON com charset UTF-8 adequadamente configurado
+    """
+    response = make_response(jsonify(data), status_code)
+    response.headers['Content-Type'] = 'application/json; charset=utf-8'
+    return response
+
+
 def cleanup_expired_keys():
     """Remove chaves expiradas da memória"""
     current_time = datetime.now()
 
     try:
         db.session.query(Key).filter(
-            Key.created_at < current_time - timedelta(seconds=config.KEY_EXPIRY_SECONDS)
+            Key.created_at < current_time -
+            timedelta(seconds=config.KEY_EXPIRY_SECONDS)
         ).delete()
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Erro ao remover chaves expiradas do banco de dados: {e}")
+        logger.error(
+            f"Erro ao remover chaves expiradas do banco de dados: {e}")
 
 
 @app.before_request
@@ -73,7 +84,7 @@ def get_capabilities():
     """
     logger.info("Solicitação de capabilities recebida")
     response = config.get_capabilities_response()
-    return jsonify(response), 200 , {'charset':'UTF-8'}
+    return json_response(response)
 
 # Endpoint: GET /key?remoteSystemID=<id>&size=<bits>
 
@@ -83,15 +94,20 @@ def get_new_key():
     """
     Gera uma nova chave e retorna key + keyId conforme RFC SKIP Seção 4.2
     """
- 
+    remote_system_id = request.args.get('remoteSystemID')
+
+    # Validar remoteSystemID se fornecido
+    if remote_system_id and not _is_valid_remote_system(remote_system_id):
+        return json_response({"error": "Invalid remoteSystemID"}, 400)
+
     # Default from config
     key_size = int(request.args.get('size', config.DEFAULT_KEY_SIZE))
 
     # Validar tamanho da chave
     if key_size < config.MIN_KEY_SIZE or key_size > config.MAX_KEY_SIZE:
-        return jsonify({
+        return json_response({
             "error": f"Invalid key size. Must be between {config.MIN_KEY_SIZE} and {config.MAX_KEY_SIZE} bits"
-        }), 400
+        }, 400)
 
     # Gerar chave segura
     key_bytes = secrets.token_bytes(key_size // 8)
@@ -101,7 +117,7 @@ def get_new_key():
     new_key = Key(
         key_id=key_id,
         key=key_hex,
-        remote_system_id=config.LOCAL_SYSTEM_ID,  # Pode ser None
+        remote_system_id=remote_system_id or config.LOCAL_SYSTEM_ID,
         size=key_size,
         created_at=datetime.now()
     )
@@ -111,7 +127,7 @@ def get_new_key():
     except Exception as e:
         db.session.rollback()
         logger.error(f"Erro ao salvar nova chave: {e}")
-        return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
+        return json_response({"error": "Internal server error"}, 500)
 
     logger.info(f"Nova chave gerada: {key_id} (size: {key_size})")
 
@@ -120,7 +136,7 @@ def get_new_key():
         "key": key_hex
     }
 
-    return jsonify(response), 200  , {'charset':'UTF-8'}
+    return json_response(response)
 
 # Endpoint: GET /key/{keyId}?remoteSystemID=<id>
 
@@ -132,13 +148,12 @@ def get_key_by_id(key_id):
     """
     remote_system_id = request.args.get('remoteSystemID')
     if not remote_system_id:
-        return jsonify({"error": "remoteSystemID is required"}), 400  , {'charset':'UTF-8'}
-
+        return json_response({"error": "remoteSystemID is required"}, 400)
 
     # Verifica se a chave existe
     try:
         if db.session.get(Key, key_id) is None:
-            return jsonify({"error": "Key not found"}), 400  , {'charset':'UTF-8'}
+            return json_response({"error": "Key not found"}, 400)
 
         # key_data = KP_DATA["keys"][key_id]
         key_record = db.session.get(Key, key_id)
@@ -148,10 +163,10 @@ def get_key_by_id(key_id):
         }
     except Exception as e:
         logger.error(f"Erro ao recuperar chave: {e}")
-        return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
+        return json_response({"error": "Internal server error"}, 500)
 
     if remote_system_id and key_record.remote_system_id != remote_system_id:
-        return jsonify({"error": "Invalid remoteSystemID for this key"}), 400  , {'charset':'UTF-8'}
+        return json_response({"error": "Invalid remoteSystemID for this key"}, 400)
     logger.info(f"Chave recuperada: {key_id}")
 
     # Zeroiza a chave após o uso (conforme RFC)
@@ -162,7 +177,7 @@ def get_key_by_id(key_id):
         except Exception as e:
             db.session.rollback()
             logger.error(f"Erro ao zeroizar chave: {e}")
-            return jsonify({"error": "Internal server error"}), 500  , {'charset':'UTF-8'}
+            return json_response({"error": "Internal server error"}, 500)
         logger.info(f"Chave zeroizada: {key_id}")
 
     return jsonify(response), 200  # Endpoint: GET /entropy?minentropy=<bits>
@@ -185,7 +200,7 @@ def get_entropy():
             "minentropy": min_entropy
         }
 
-        return jsonify(response), 200  , {'charset':'UTF-8'}
+        return json_response(response)
 
     except Exception:
         return jsonify({"error": "Hardware random number generator not available"}), 503
@@ -195,7 +210,7 @@ def _is_valid_remote_system(remote_system_id):
     """
     Verifica se o remoteSystemID é válido (suporte a glob patterns)
     """
-    for valid_id in KP_DATA["remoteSystemIDs"]:
+    for valid_id in config.REMOTE_SYSTEM_IDS:
         if valid_id == remote_system_id:
             return True
         # Suporte básico para glob pattern com *
@@ -211,12 +226,12 @@ def _is_valid_remote_system(remote_system_id):
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"error": "Endpoint not found"}), 404  , {'charset':'UTF-8'}
+    return json_response({"error": "Endpoint not found"}, 404)
 
 
 @app.errorhandler(405)
 def method_not_allowed(error):
-    return jsonify({"error": "Method not allowed. Only GET is supported"}), 405  , {'charset':'UTF-8'}
+    return json_response({"error": "Method not allowed. Only GET is supported"}, 405)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,18 @@
+services:
+  skip_server:
+    build: ./src
+    restart: unless-stopped
+    container_name: skip_server
+    ports:
+      - "8080:8080"
+    environment:
+      - FLASK_ENV=development
+      - SKIP_LOCAL_SYSTEM_ID=KP_QuIIN_Server
+      - SKIP_REMOTE_SYSTEM_ID_1=KP_QuIIN_Client
+      - MYSQL_ROOT_PASSWORD=your_root_password_here
+      - MYSQL_DATABASE=my_database_name
+      - MYSQL_USER=my_user
+      - MYSQL_PASSWORD=my_user_password_here
+      - MYSQL_HOST=host.docker.internal  
+    extra_hosts:
+      - "host.docker.internal:host-gateway" 

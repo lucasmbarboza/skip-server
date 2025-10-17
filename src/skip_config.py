@@ -15,11 +15,9 @@ class SKIPConfig:
     DEBUG = False
 
     # Configurações do Key Provider
-    LOCAL_SYSTEM_ID = "KP_QuIIN_Server"
+    LOCAL_SYSTEM_ID = os.getenv('SKIP_LOCAL_SYSTEM_ID', 'KP_QuIIN_Server')
     REMOTE_SYSTEM_IDS = [
-        "KP_QuIIN_Client",
-        "KP_*_Test",
-        "KP_Development_*"
+        os.getenv('SKIP_REMOTE_SYSTEM_ID_1', 'KP_QuIIN_Client'),
     ]
 
     # Algoritmos suportados (RFC SKIP Table 1)
@@ -40,47 +38,18 @@ class SKIPConfig:
     LOG_LEVEL = "INFO"
     LOG_FILE = "/var/log/skip/skip_server.log"
 
-    # Configurações TLS/Stunnel
-    STUNNEL_ACCEPT_PORT = 8443  # Porta externa HTTPS (stunnel)
-    STUNNEL_BACKEND_PORT = PORT  # Porta interna HTTP
-    PSK_FILE = "psk.txt"
+
 
     # Configurações de Sincronização entre Key Providers
-    SYNC_ENABLED = True
-    SYNC_USE_HTTPS = True  # Usar HTTPS via stunnel (sem certificados válidos)
-    SYNC_INTERVAL = 30  # Intervalo de sincronização em segundos
-    HEARTBEAT_INTERVAL = 10  # Intervalo de heartbeat em segundos
-    MAX_RETRY_ATTEMPTS = 3  # Máximo de tentativas de reconexão
-    SYNC_TIMEOUT = 10  # Timeout para operações de sincronização
-    SYNC_PORT = 8443  # Porta para comunicação de sincronização (via stunnel)
-
-    # Configurações SSL/TLS para sincronização (via stunnel)
-    SSL_VERIFY_PEER = False  # Não verificar certificados (sem certs válidos)
-    SSL_CHECK_HOSTNAME = False  # Não verificar hostname
-    SSL_MIN_VERSION = "TLSv1.2"  # Versão mínima do TLS
-    SSL_MAX_VERSION = "TLSv1.2"  # Versão máxima do TLS
-    SSL_CIPHERS = "DHE-PSK-AES256-CBC-SHA384:DHE-PSK-AES256-CBC-SHA"  # Ciphers PSK
-
-    # Configurações de Sincronização entre Key Providers
-    MYSQL_ROOT_PASSWORD = 'your_root_password_here'  # **MUDE ESTA SENHA!**
-    MYSQL_DATABASE = 'my_database_name'            # Nome do seu banco de dados
-    MYSQL_USER = 'my_user'                         # Nome do usuário do banco de dados
-    MYSQL_PASSWORD = 'my_user_password_here'
-    MYSQL_HOST = 'localhost'                     # Host do banco de dados
-    MYSQL_PORT = 3306                            # Porta do banco de dados
-
-    # Peers para sincronização (configurar conforme ambiente)
-    SYNC_PEERS = [
-        # Exemplo de configuração de peer:
-        # {
-        #     "system_id": "KP_QuIIN_Backup",
-        #     "endpoint": "192.168.1.100",
-        #     "port": 8443,  # Porta HTTPS via stunnel
-        #     "shared_secret": "your_shared_secret_here"
-        # }
-    ]
+    MYSQL_ROOT_PASSWORD = os.getenv('MYSQL_ROOT_PASSWORD', 'your_root_password_here')  
+    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'my_database_name')            # Nome do seu banco de dados
+    MYSQL_USER = os.getenv('MYSQL_USER', 'my_user')                         # Nome do usuário do banco de dados
+    MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'my_user_password_here')
+    MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')                     # Host do banco de dados
+    MYSQL_PORT = os.getenv('MYSQL_PORT', 3306)                            # Porta do banco de dados
 
     # Validação de configuração
+
     @classmethod
     def validate(cls):
         """Valida a configuração"""

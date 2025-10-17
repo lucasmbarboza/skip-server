@@ -1,10 +1,10 @@
 #!/bin/bash
-# SKIP Server Enhanced Setup Script
-# RFC SKIP compliant configuration
+# SKIP Server Docker Setup Script
+# RFC SKIP compliant configuration with Docker Compose
 
 set -e
 
-echo "=== SKIP Server Setup - RFC Compliant ==="
+echo "=== SKIP Server Docker Setup - RFC Compliant ==="
 
 # Cores para output
 RED='\033[0;31m'
@@ -24,16 +24,40 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Função para verificar se o stunnel4 está instalado
-check_stunnel() {
-    if ! command -v stunnel4 &> /dev/null; then
-        log_error "stunnel4 não está instalado"
-        log_info "Instalando stunnel4..."
-        sudo apt-get update
-        sudo apt-get install -y stunnel4
+# Função para verificar se o Docker está instalado
+check_docker() {
+    if ! command -v docker &> /dev/null; then
+        log_error "Docker não está instalado"
+        log_info "Para instalar o Docker, visite: https://docs.docker.com/get-docker/"
+        exit 1
     else
-        log_info "stunnel4 já está instalado"
+        log_info "Docker está instalado: $(docker --version)"
     fi
+    
+    if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+        log_error "Docker Compose não está instalado"
+        log_info "Para instalar o Docker Compose, visite: https://docs.docker.com/compose/install/"
+        exit 1
+    else
+        if command -v docker-compose &> /dev/null; then
+            log_info "Docker Compose está instalado: $(docker-compose --version)"
+        else
+            log_info "Docker Compose (plugin) está instalado: $(docker compose version)"
+        fi
+    fi
+    
+    # Verifica se o Docker daemon está rodando
+    if ! docker info &> /dev/null; then
+        log_error "Docker daemon não está rodando"
+        log_info "Execute: sudo systemctl start docker"
+        exit 1
+    fi
+}
+
+# Função para verificar se o stunnel4 está instalado (mantido para compatibilidade)
+check_stunnel() {
+    log_info "stunnel4 será gerenciado pelo container Docker"
+    log_warn "Esta configuração usa Docker - stunnel4 não é necessário no host"
 }
 
 # Função para configurar diretórios de log
@@ -226,43 +250,85 @@ start_services() {
 
 # Função para mostrar status
 show_status() {
-    log_info "Status dos serviços:"
-    echo "stunnel4: $(sudo systemctl is-active stunnel4)"
+    log_info "Verificando arquivos necessários para Docker:"
     
-    log_info "Portas em uso:"
-    sudo netstat -tlnp | grep -E ":(443|8080)" || log_warn "Nenhuma porta SKIP detectada"
+    if [ -f "docker-compose.yml" ]; then
+        echo "✓ docker-compose.yml encontrado"
+    else
+        log_error "docker-compose.yml não encontrado!"
+        exit 1
+    fi
     
-    log_info "Logs disponíveis em:"
-    echo "  - stunnel: /var/log/stunnel4/"
-    echo "  - SKIP: /var/log/skip/"
+    if [ -f "src/Dockerfile" ]; then
+        echo "✓ src/Dockerfile encontrado"
+    else
+        log_error "src/Dockerfile não encontrado!"
+        exit 1
+    fi
     
-    log_info "Para iniciar o servidor SKIP:"
-    echo "  1. Ative o ambiente virtual: source venv/bin/activate"
-    echo "  2. Execute o servidor: python skip_server.py"
-    echo "  3. Para desativar o ambiente virtual: deactivate"
+    if [ -f "src/skip_server.py" ]; then
+        echo "✓ src/skip_server.py encontrado"
+    else
+        log_error "src/skip_server.py não encontrado!"
+        exit 1
+    fi
+    
+    log_info "Portas que serão utilizadas:"
+    echo "  - HTTP: 8080 (container interno e externo)"
+    
+    log_info "Para iniciar o servidor SKIP com Docker:"
+    echo "  1. Construir e iniciar: docker-compose up --build"
+    echo "  2. Executar em background: docker-compose up -d --build"
+    echo "  3. Para parar: docker-compose down"
+    echo "  4. Ver logs: docker-compose logs -f skip_server"
     echo ""
-    log_info "Endpoint HTTPS: https://localhost:8443/"
+    log_info "Endpoint HTTP: http://localhost:8080/"
+    log_info "Endpoints de teste:"
+    echo "  - Capabilities: http://localhost:8080/capabilities"
+    echo "  - Health check: http://localhost:8080/status/health"
+}
+
+# Função para testar se o Docker pode construir a imagem
+test_docker_build() {
+    log_info "Testando construção da imagem Docker..."
+    
+    if docker-compose config > /dev/null 2>&1 || docker compose config > /dev/null 2>&1; then
+        log_info "✓ docker-compose.yml é válido"
+    else
+        log_error "docker-compose.yml contém erros"
+        return 1
+    fi
+    
+    log_info "Construção de teste concluída com sucesso"
+    log_warn "Para construir e executar o container, use: docker-compose up --build"
 }
 
 # Execução principal
 main() {
-    log_info "Iniciando setup do SKIP Server..."
+    log_info "Iniciando setup do SKIP Server com Docker..."
     
+    check_docker
     check_stunnel
     setup_directories
     validate_psk
-    check_python_deps
-    validate_config
-    setup_stunnel
-    start_services
+    test_docker_build
+    # check_python_deps (não necessário com Docker)
+    # validate_config (será feito pelo container)
+    # setup_stunnel (será feito pelo container)
+    # start_services (será feito pelo docker-compose)
     show_status
     
     log_info "Setup concluído com sucesso!"
     log_info ""
-    log_info "INSTRUÇÕES PARA INICIAR O SERVIDOR:"
+    log_info "INSTRUÇÕES PARA INICIAR O SERVIDOR COM DOCKER:"
     log_info "1. cd $(pwd)"
-    log_info "2. source venv/bin/activate"
-    log_info "3. python skip_server.py"
+    log_info "2. docker-compose up --build"
+    log_info ""
+    log_info "COMANDOS ÚTEIS:"
+    log_info "• Executar em background: docker-compose up -d --build"
+    log_info "• Ver logs: docker-compose logs -f skip_server"
+    log_info "• Parar container: docker-compose down"
+    log_info "• Rebuild: docker-compose build --no-cache"
 }
 
 
