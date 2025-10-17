@@ -74,6 +74,33 @@ def after_request(response):
     logger.debug(f"Resposta: {response.status_code}")
     return response
 
+# Endpoint adicional para verificação de saúde (não obrigatório pela RFC)
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """
+    Endpoint de verificação de saúde do serviço
+    """
+    try:
+        # Verificar conexão com banco de dados
+        db.session.execute(sa.text('SELECT 1'))
+        db_status = "ok"
+    except Exception as e:
+        logger.error(f"Erro na verificação de saúde do banco: {e}")
+        db_status = "error"
+
+    response = {
+        "status": "ok" if db_status == "ok" else "degraded",
+        "timestamp": datetime.now().isoformat(),
+        "database": db_status,
+        "version": "1.0.0",
+        "localSystemID": config.LOCAL_SYSTEM_ID
+    }
+
+    status_code = 200 if db_status == "ok" else 503
+    return json_response(response, status_code)
+
 # Endpoint: GET /capabilities
 
 
@@ -96,12 +123,19 @@ def get_new_key():
     """
     remote_system_id = request.args.get('remoteSystemID')
 
-    # Validar remoteSystemID se fornecido
-    if remote_system_id and not _is_valid_remote_system(remote_system_id):
+    # RFC SKIP: remoteSystemID é obrigatório para geração de novas chaves
+    if not remote_system_id:
+        return json_response({"error": "remoteSystemID is required"}, 400)
+
+    # Validar remoteSystemID
+    if not _is_valid_remote_system(remote_system_id):
         return json_response({"error": "Invalid remoteSystemID"}, 400)
 
-    # Default from config
-    key_size = int(request.args.get('size', config.DEFAULT_KEY_SIZE))
+    try:
+        # Default from config (256 bits como padrão da RFC)
+        key_size = int(request.args.get('size', config.DEFAULT_KEY_SIZE))
+    except ValueError:
+        return json_response({"error": "Invalid size parameter"}, 400)
 
     # Validar tamanho da chave
     if key_size < config.MIN_KEY_SIZE or key_size > config.MAX_KEY_SIZE:
@@ -109,34 +143,44 @@ def get_new_key():
             "error": f"Invalid key size. Must be between {config.MIN_KEY_SIZE} and {config.MAX_KEY_SIZE} bits"
         }, 400)
 
-    # Gerar chave segura
-    key_bytes = secrets.token_bytes(key_size // 8)
-    key_hex = key_bytes.hex()
-    key_id = uuid.uuid4().hex
+    # Verificar se é múltiplo de 8
+    if key_size % 8 != 0:
+        return json_response({"error": "Key size must be a multiple of 8"}, 400)
 
-    new_key = Key(
-        key_id=key_id,
-        key=key_hex,
-        remote_system_id=remote_system_id or config.LOCAL_SYSTEM_ID,
-        size=key_size,
-        created_at=datetime.now()
-    )
     try:
+        # Gerar chave segura
+        key_bytes = secrets.token_bytes(key_size // 8)
+        key_hex = key_bytes.hex()
+
+        # Gerar keyId de 128 bits (padrão RFC) em formato hex
+        key_id_bytes = secrets.token_bytes(16)  # 128 bits / 8 = 16 bytes
+        key_id = key_id_bytes.hex()
+
+        new_key = Key(
+            key_id=key_id,
+            key=key_hex,
+            remote_system_id=remote_system_id,
+            size=key_size,
+            created_at=datetime.now()
+        )
+
         db.session.add(new_key)
         db.session.commit()
+
+        logger.info(
+            f"Nova chave gerada: {key_id} (size: {key_size} bits, remoteSystemID: {remote_system_id})")
+
+        response = {
+            "keyId": key_id,
+            "key": key_hex
+        }
+
+        return json_response(response)
+
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Erro ao salvar nova chave: {e}")
+        logger.error(f"Erro ao gerar/salvar nova chave: {e}")
         return json_response({"error": "Internal server error"}, 500)
-
-    logger.info(f"Nova chave gerada: {key_id} (size: {key_size})")
-
-    response = {
-        "keyId": key_id,
-        "key": key_hex
-    }
-
-    return json_response(response)
 
 # Endpoint: GET /key/{keyId}?remoteSystemID=<id>
 
@@ -150,37 +194,55 @@ def get_key_by_id(key_id):
     if not remote_system_id:
         return json_response({"error": "remoteSystemID is required"}, 400)
 
-    # Verifica se a chave existe
+    # Validar formato do keyId (deve ser hexadecimal)
+    if not key_id or len(key_id) != 32:  # 128 bits = 32 caracteres hex
+        return json_response({"error": "Malformed keyId"}, 400)
+
     try:
-        if db.session.get(Key, key_id) is None:
+        # Verificar se é hexadecimal válido
+        int(key_id, 16)
+    except ValueError:
+        return json_response({"error": "Malformed keyId"}, 400)
+
+    # Validar remoteSystemID
+    if not _is_valid_remote_system(remote_system_id):
+        return json_response({"error": "Invalid remoteSystemID"}, 400)
+
+    try:
+        # Buscar a chave no banco de dados
+        key_record = db.session.get(Key, key_id)
+        if key_record is None:
             return json_response({"error": "Key not found"}, 400)
 
-        # key_data = KP_DATA["keys"][key_id]
-        key_record = db.session.get(Key, key_id)
+        # Verificar se o remoteSystemID corresponde
+        if key_record.remote_system_id != remote_system_id:
+            return json_response({"error": "Invalid remoteSystemID for this key"}, 400)
+
         response = {
             "keyId": key_record.key_id,
-            "key": key_record.key,
+            "key": key_record.key
         }
+
+        logger.info(
+            f"Chave recuperada: {key_id} (remoteSystemID: {remote_system_id})")
+
+        # Zeroiza a chave após o uso (conforme RFC SKIP Seção 4.2.2)
+        if config.ENABLE_KEY_ZEROIZATION:
+            try:
+                db.session.delete(key_record)
+                db.session.commit()
+                logger.info(f"Chave zeroizada após uso: {key_id}")
+            except Exception as e:
+                db.session.rollback()
+                logger.error(f"Erro ao zeroizar chave: {e}")
+                return json_response({"error": "Internal error while trying to zeroize key"}, 500)
+
+        return json_response(response)
+
     except Exception as e:
-        logger.error(f"Erro ao recuperar chave: {e}")
-        return json_response({"error": "Internal server error"}, 500)
-
-    if remote_system_id and key_record.remote_system_id != remote_system_id:
-        return json_response({"error": "Invalid remoteSystemID for this key"}, 400)
-    logger.info(f"Chave recuperada: {key_id}")
-
-    # Zeroiza a chave após o uso (conforme RFC)
-    if config.ENABLE_KEY_ZEROIZATION:
-        try:
-            db.session.delete(key_record)
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            logger.error(f"Erro ao zeroizar chave: {e}")
-            return json_response({"error": "Internal server error"}, 500)
-        logger.info(f"Chave zeroizada: {key_id}")
-
-    return jsonify(response), 200  # Endpoint: GET /entropy?minentropy=<bits>
+        logger.error(f"Erro ao recuperar chave {key_id}: {e}")
+        # Endpoint: GET /entropy?minentropy=<bits>
+        return json_response({"error": "Internal error while trying to read key"}, 500)
 
 
 @app.route('/entropy', methods=['GET'])
@@ -188,9 +250,18 @@ def get_entropy():
     """
     Retorna entropia aleatória conforme RFC SKIP Seção 4.3
     """
-    min_entropy = int(request.args.get('minentropy', 256))  # Default 256 bits
-
     try:
+        min_entropy = int(request.args.get(
+            'minentropy', 256))  # Default 256 bits
+
+        # Validar tamanho mínimo de entropia
+        if min_entropy < 8 or min_entropy > 2048:  # Limites razoáveis
+            return json_response({"error": "Invalid minentropy. Must be between 8 and 2048 bits"}, 400)
+
+        # Verificar se é múltiplo de 8
+        if min_entropy % 8 != 0:
+            return json_response({"error": "minentropy must be a multiple of 8"}, 400)
+
         # Gera entropia aleatória
         entropy_bytes = secrets.token_bytes(min_entropy // 8)
         entropy_hex = entropy_bytes.hex().upper()
@@ -200,10 +271,14 @@ def get_entropy():
             "minentropy": min_entropy
         }
 
+        logger.info(f"Entropia gerada: {min_entropy} bits")
         return json_response(response)
 
-    except Exception:
-        return jsonify({"error": "Hardware random number generator not available"}), 503
+    except ValueError:
+        return json_response({"error": "Invalid minentropy parameter"}, 400)
+    except Exception as e:
+        logger.error(f"Erro ao gerar entropia: {e}")
+        return json_response({"error": "Hardware random number generator not available"}, 503)
 
 
 def _is_valid_remote_system(remote_system_id):
@@ -221,17 +296,48 @@ def _is_valid_remote_system(remote_system_id):
                 return True
     return False
 
-# Tratamento de erros HTTP
+# Tratamento de erros HTTP conforme RFC SKIP Tabela 3
 
 
 @app.errorhandler(404)
 def not_found(error):
+    """
+    RFC SKIP Tabela 3: 404 - A path that doesn't correspond to those described in Table 2 was provided
+    """
     return json_response({"error": "Endpoint not found"}, 404)
 
 
 @app.errorhandler(405)
 def method_not_allowed(error):
+    """
+    RFC SKIP Tabela 3: 405 - A bad method was used. Only 'GET' is supported
+    """
     return json_response({"error": "Method not allowed. Only GET is supported"}, 405)
+
+
+@app.errorhandler(400)
+def bad_request(error):
+    """
+    RFC SKIP Tabela 7: 400 - A malformed keyId was requested or the key was not found
+    """
+    return json_response({"error": "Bad request"}, 400)
+
+
+@app.errorhandler(500)
+def internal_server_error(error):
+    """
+    RFC SKIP Tabela 7: 500 - There was an internal error while trying to read or zeroize the key
+    """
+    logger.error(f"Internal server error: {error}")
+    return json_response({"error": "Internal server error"}, 500)
+
+
+@app.errorhandler(503)
+def service_unavailable(error):
+    """
+    RFC SKIP Tabela 9: 503 - Hardware random number generator is not available or entropy pool doesn't have enough entropy
+    """
+    return json_response({"error": "Service unavailable"}, 503)
 
 
 if __name__ == '__main__':
