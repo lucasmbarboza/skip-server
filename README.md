@@ -17,7 +17,8 @@ O SKIP é um protocolo que permite a dois participantes (encryptors) obter de fo
 - **Banco de Dados Compartilhado**: Persistência MySQL para múltiplos Key Providers
 - **Docker Ready**: Containerização completa com MySQL
 - **Quantum Resistant**: Geração de chaves criptograficamente seguras
-- **Observabilidade**: Logs detalhados e endpoint de monitoramento
+- **Observabilidade**: OpenTelemetry com logs, traces e métricas
+- **Integração Splunk**: Coleta automática via OTEL Collector
 - **Produção Ready**: TLS 1.2/1.3 com autenticação PSK/Certificado
 
 ## Arquitetura
@@ -173,6 +174,239 @@ Conforme RFC SKIP Tabela 1, suportamos:
 | PSK | TLS 1.2 | TLS_DHE_PSK_WITH_AES_256_CBC_SHA384 | RECOMMENDED |
 | PSK | TLS 1.2 | TLS_DHE_PSK_WITH_AES_256_CBC_SHA | RECOMMENDED |
 | Certificate/PSK | TLS 1.3 | TLS_AES_256_GCM_SHA384 | REQUIRED |
+
+## Observabilidade e Monitoramento
+
+O servidor SKIP inclui um sistema completo de observabilidade baseado em **OpenTelemetry** com integração nativa ao **Splunk**.
+
+### Características da Observabilidade
+
+- **OpenTelemetry SDK**: Logs, traces e métricas automatizadas
+- **OTEL Collector**: Coleta e exportação de telemetria
+- **Splunk Integration**: Dashboards e alertas prontos para produção
+- **Distributed Tracing**: Rastreamento completo de requisições
+- **Custom Logs**: Logs estruturados com contexto de endpoint
+
+### Arquitetura de Observabilidade
+
+```text
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   SKIP Server   │───▶│ OTEL Collector  │───▶│     Splunk      │
+│  (Application)  │    │   (Processor)   │    │   (Storage)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+    ┌────▼────┐             ┌────▼────┐             ┌────▼────┐
+    │  Logs   │             │ Metrics │             │Dashboards│
+    │ Traces  │             │ Transform│             │ Alerts  │
+    │Metrics  │             │ Enrichment│            │Analytics│
+    └─────────┘             └─────────┘             └─────────┘
+```
+
+### Deployment com OpenTelemetry
+
+#### 1. Configuração OTEL (Recomendado)
+
+```bash
+# 1. Configure as variáveis de ambiente
+cp .env.example .env
+# Edite as configurações do Splunk e MySQL
+
+# 2. Execute com observabilidade completa
+docker-compose -f docker-compose_otel.yml up -d
+
+# 3. Verifique os logs do collector
+docker logs otel-collector
+
+# 4. Teste endpoints com rastreamento
+curl -k "http://localhost:8080/health"
+curl -k "http://localhost:8080/capabilities"
+```
+
+#### 2. Configuração de Variáveis OTEL
+
+Configure as seguintes variáveis no arquivo `.env`:
+
+```bash
+# OpenTelemetry Configuration
+OTEL_SERVICE_NAME=skip-server
+OTEL_SERVICE_VERSION=1.0.0
+OTEL_ENVIRONMENT=production
+OTEL_RESOURCE_ATTRIBUTES=service.name=skip-server,service.version=1.0.0
+
+# External Splunk Configuration
+SPLUNK_HEC_ENDPOINT=http://localhost:8088
+SPLUNK_HEC_TOKEN=12345678-1234-1234-1234-123456789012
+
+# Skip Server Configuration
+SKIP_LOCAL_SYSTEM_ID=system_001
+SKIP_REMOTE_SYSTEM_ID=system_002
+ENVIRONMENT=development
+```
+
+### Tipos de Telemetria Coletada
+
+#### 1. **Logs Estruturados**
+
+- **REQUEST logs**: Método, path, endpoint, argumentos, IP remoto
+- **RESPONSE logs**: Status, tamanho, endpoint, dados da resposta
+- **Operações de chave**: Geração, recuperação, zeroização
+- **Eventos de banco**: Conexões, queries, erros
+
+Exemplo de log REQUEST:
+```
+REQUEST | method=GET | path=/key | endpoint=get_new_key | args=ImmutableMultiDict([('remoteSystemID', 'system_002'), ('size', '256')]) | remote_addr=172.23.0.1
+```
+
+Exemplo de log RESPONSE:
+```
+RESPONSE | status_code=200 | content_length=127 | endpoint=get_new_key | data={"key": "ad4a60c092763f5e...", "keyId": "4e1d61a7e704a6a1..."}
+```
+
+#### 2. **Distributed Traces**
+
+- **HTTP spans**: Requisições completas com timing
+- **Database spans**: Operações MySQL com queries
+- **Application spans**: Lógica de negócio e processamento
+- **Custom spans**: Operações específicas do SKIP
+
+#### 3. **Métricas Automáticas**
+
+- **HTTP métricas**: Latência, throughput, códigos de status
+- **Database métricas**: Pool de conexões, query time
+- **Application métricas**: Chaves geradas, cache hits
+- **System métricas**: CPU, memória, network
+
+### Queries Splunk Prontas
+
+#### Monitoramento Básico
+
+```spl
+# Ver todos os logs do SKIP Server
+index=main sourcetype=skip:traces span.name="app_log"
+
+# Filtrar logs por endpoint específico
+index=main sourcetype=skip:traces span.name="app_log" log.message="*endpoint=health_check*"
+
+# Análise de performance por endpoint
+index=main sourcetype=skip:traces span.kind=server
+| stats avg(duration) as avg_duration, count as request_count by http.route
+| sort -avg_duration
+```
+
+#### Análise de Chaves Criptográficas
+
+```spl
+# Auditoria completa de operações de chave
+index=main sourcetype=skip:traces span.name="app_log" 
+  (log.message="*KEY_GENERATED*" OR log.message="*KEY_RETRIEVED*")
+| rex field=log.message "(?<action>KEY_\w+) \| key_id=(?<key_id>\w+)"
+| stats count by action
+```
+
+#### Detecção de Anomalias
+
+```spl
+# Detectar latência alta em endpoints
+index=main sourcetype=skip:traces span.kind=server
+| where duration > 1000
+| stats count by http.route, _time
+| sort -count
+```
+
+### Dashboards Disponíveis
+
+1. **SKIP Overview**: Status geral, throughput, latência
+2. **Key Operations**: Geração, recuperação, zeroização de chaves
+3. **Database Performance**: MySQL queries, conexões, locks
+4. **Security Audit**: Tentativas de acesso, validações systemID
+5. **Error Analysis**: Logs de erro com contexto e stack traces
+
+### Configuração Splunk
+
+#### 1. **Índices Recomendados**
+
+```conf
+# indexes.conf
+[skip_traces]
+homePath = $SPLUNK_DB/skip_traces/db
+coldPath = $SPLUNK_DB/skip_traces/colddb
+thawedPath = $SPLUNK_DB/skip_traces/thaweddb
+maxDataSize = auto_high_volume
+maxHotBuckets = 10
+maxWarmDBCount = 300
+```
+
+#### 2. **Inputs Configuration**
+
+```conf
+# inputs.conf
+[http://skip_hec]
+token = 12345678-1234-1234-1234-123456789012
+index = skip_traces
+sourcetype = skip:traces
+disabled = false
+```
+
+### Alertas Recomendados
+
+#### 1. **High Error Rate**
+
+```spl
+index=main sourcetype=skip:traces span.name="app_log" log.level=ERROR
+| bucket _time span=5m
+| stats count as errors by _time
+| where errors > 10
+```
+
+#### 2. **Database Connection Issues**
+
+```spl
+index=main sourcetype=skip:traces db.system=mysql
+| where duration > 5000
+| stats count by db.statement
+```
+
+#### 3. **Security Violations**
+
+```spl
+index=main sourcetype=skip:traces log.message="*UNAUTHORIZED*"
+| stats count by remote_addr
+| where count > 5
+```
+
+### Troubleshooting Observabilidade
+
+#### Verificar OTEL Collector
+
+```bash
+# Status do collector
+docker logs otel-collector | tail -20
+
+# Métricas internas do collector
+curl http://localhost:8888/metrics
+
+# Debug do pipeline
+docker exec otel-collector cat /etc/otel-collector-config.yaml
+```
+
+#### Verificar Dados no Splunk
+
+```spl
+# Verificar se dados estão chegando
+| rest /services/data/indexes 
+| search title=skip_traces
+| table title, currentDBSizeMB, totalEventCount
+```
+
+#### Debug de Spans
+
+```bash
+# Ver spans sendo criados
+docker logs skip_server | grep "app_log"
+
+# Verificar traces no collector
+docker logs otel-collector | grep "traces" | tail -10
+```
 
 ## Instalação e Configuração
 
@@ -360,10 +594,16 @@ SKIP Server/
 │   ├── skip_server.py          # Servidor principal SKIP
 │   ├── skip_config.py          # Configurações
 │   ├── models.py               # Modelos de banco de dados
+│   ├── otel_config.py          # Configuração OpenTelemetry
 │   └── Dockerfile              # Imagem do container
-├── docker-compose.yml          # Orquestração do container
+├── docker-compose.yml          # Orquestração básica
+├── docker-compose_otel.yml     # Orquestração com OpenTelemetry
+├── docker-compose_splunk.yml   # Orquestração com Splunk
+├── otel-collector-config.yaml  # Configuração OTEL Collector
+├── .env.example                # Variáveis de ambiente exemplo
 ├── stunnel.conf                # Configuração TLS/PSK
 ├── psk.txt                     # Chaves pré-compartilhadas
+├── splunk_otel_queries.spl     # Queries Splunk para OTEL
 ├── test_rfc_compliance.py      # Testes de conformidade RFC
 ├── test_specific_issue.py      # Testes de problemas específicos
 ├── RFC_COMPLIANCE.md           # Relatório de conformidade
@@ -392,9 +632,29 @@ A comunicação é protegida por TLS com chaves pré-compartilhadas conforme RFC
 
 ## Logs
 
+### Logs Tradicionais
 - **stunnel4:** `/var/log/stunnel4/skip-server.log`
 - **SKIP Server:** Logs do container via `docker compose logs`
 - **MySQL:** Logs de consulta do banco de dados (configurável)
+
+### Logs OpenTelemetry (Recomendado)
+- **Structured Logs:** Via OTEL Collector com spans customizados
+- **Request/Response:** Logs detalhados com contexto de endpoint
+- **Distributed Tracing:** Correlação automática de logs e traces
+- **Splunk Integration:** Dashboards e alertas automáticos
+
+#### Visualizar Logs OTEL
+
+```bash
+# Logs estruturados via collector
+docker logs otel-collector | grep "app_log"
+
+# Logs da aplicação com traces
+docker logs skip_server | grep "REQUEST\|RESPONSE"
+
+# Queries Splunk para análise
+# Ver arquivo: splunk_otel_queries.spl
+```
 
 ## Testes e Validação
 
@@ -504,3 +764,5 @@ python3 src/skip_server.py
 ## Licença
 
 Este projeto implementa especificações públicas do IETF e está disponível para uso conforme as diretrizes de implementação de RFCs.
+ 
+ 

@@ -1,0 +1,38 @@
+services:
+  skip_server_1:
+    build: ./src
+    restart: unless-stopped
+    container_name: skip_server_1
+    network_mode: host
+    ports:
+      - "8081:8080"
+    environment:
+      - FLASK_ENV=development
+      - SKIP_LOCAL_SYSTEM_ID=skip_server_1
+      - SKIP_REMOTE_SYSTEM_ID_1=skip_server_2
+      - MYSQL_ROOT_PASSWORD=your_root_password_here
+      - MYSQL_DATABASE=my_database_name
+      - MYSQL_USER=my_user
+      - MYSQL_PASSWORD=my_user_password_here
+      - MYSQL_HOST=127.0.0.1
+    volumes:
+      - ./logs/server1:/app/logs  
+  skip_server_2:
+    build: ./src
+    restart: unless-stopped
+    container_name: skip_server_2
+    network_mode: host
+    ports:
+      - "8082:8080"
+    environment:
+      - FLASK_ENV=development
+      - SKIP_LOCAL_SYSTEM_ID=skip_server_2
+      - SKIP_REMOTE_SYSTEM_ID_1=skip_server_1
+      - MYSQL_ROOT_PASSWORD=your_root_password_here
+      - MYSQL_DATABASE=my_database_name
+      - MYSQL_USER=my_user
+      - MYSQL_PASSWORD=my_user_password_here
+      - MYSQL_HOST=127.0.0.1  
+    volumes:
+      - ./logs/server2:/app/logs
+

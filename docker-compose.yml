@@ -16,4 +16,22 @@ services:
       - MYSQL_PASSWORD=my_user_password_here
       - MYSQL_HOST=127.0.0.1  
     extra_hosts:
-      - "host.docker.internal:host-gateway" 
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./logs:/app/logs
+
+  splunk:
+    image: splunk/splunk:latest
+    container_name: so1
+    hostname: so1
+    ports:
+      - "8000:8000"
+    environment:
+      - SPLUNK_PASSWORD=admin123
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_LICENSE_URI=Free
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./logs:/opt/splunk/var/log/skip:ro
+

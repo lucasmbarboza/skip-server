@@ -1,0 +1,86 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  attributes:
+    actions:
+      - key: environment
+        value: development
+        action: upsert
+      - key: collector.name
+        value: otel-collector
+        action: upsert
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: development
+        action: upsert
+
+  memory_limiter:
+    limit_mib: 512
+    check_interval: 1s
+
+exporters:
+  # Splunk HEC exporter for logs (using environment variables)
+  splunk_hec/logs:
+    endpoint: "${SPLUNK_HEC_ENDPOINT}/services/collector"
+    token: "${SPLUNK_HEC_TOKEN}"
+    index: "main"
+    source: "skip-server"
+    sourcetype: "skip:logs"
+    disable_compression: false
+    max_idle_conns: 200
+    timeout: 10s
+
+  # Splunk HEC exporter for traces (using environment variables)
+  splunk_hec/traces:
+    endpoint: "${SPLUNK_HEC_ENDPOINT}/services/collector"
+    token: "${SPLUNK_HEC_TOKEN}"
+    index: "main"
+    source: "skip-server"
+    sourcetype: "skip:traces"
+    disable_compression: false
+
+  # Debug exporter for troubleshooting
+  debug:
+    verbosity: detailed
+
+  # Prometheus metrics exporter
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+
+extensions:
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, resource, batch]
+      exporters: [splunk_hec/logs, debug]
+
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, resource, batch]
+      exporters: [splunk_hec/traces, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes, resource, batch]
+      exporters: [prometheus, debug]
+
+  extensions: [pprof, zpages]

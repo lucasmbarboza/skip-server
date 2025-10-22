@@ -1,0 +1,94 @@
+# Queries úteis para monitoramento no Splunk - SKIP Server Multi-Instance
+
+## 1. Ver todos os logs dos servidores SKIP
+index=main sourcetype=skip_server_logs
+
+## 2. Filtrar logs por servidor específico
+index=main sourcetype=skip_server_logs server_id=skip_server_1
+index=main sourcetype=skip_server_logs server_id=skip_server_2
+
+## 3. Ver apenas logs de erro
+index=main sourcetype=skip_server_logs log_level=ERROR
+
+## 4. Monitorar geração de chaves por servidor
+index=main sourcetype=skip_server_logs event_type=key_generation
+| stats count by server_id, key_size
+| sort -count
+
+## 5. Monitorar recuperação de chaves
+index=main sourcetype=skip_server_logs event_type=key_retrieval
+| stats count by server_id, remote_system_id
+
+## 6. Estatísticas por servidor e tipo de evento
+index=main sourcetype=skip_server_logs 
+| stats count by server_id, event_type
+| xyseries server_id event_type count
+| fillnull value=0
+
+## 7. Timeline de atividades por servidor
+index=main sourcetype=skip_server_logs 
+| timechart span=1m count by server_id
+
+## 8. Análise de requisições HTTP
+index=main sourcetype=skip_server_logs event_type=http_request
+| stats count by server_id, http_method, http_path
+| sort -count
+
+## 9. Códigos de resposta HTTP por servidor
+index=main sourcetype=skip_server_logs event_type=http_response
+| stats count by server_id, status_code
+| xyseries server_id status_code count
+| fillnull value=0
+
+## 10. Monitorar chaves por tamanho e servidor
+index=main sourcetype=skip_server_logs event_type=key_generation
+| chart count by server_id, key_size
+
+## 11. Performance de entropia por servidor
+index=main sourcetype=skip_server_logs event_type=entropy_generation
+| stats avg(min_entropy) as avg_entropy, count as entropy_requests by server_id
+
+## 12. Análise de zeroização de chaves
+index=main sourcetype=skip_server_logs event_type=key_zeroization
+| stats count by server_id
+| eval zeroization_rate = count
+
+## 13. Detecção de erros por servidor
+index=main sourcetype=skip_server_logs log_level=ERROR
+| stats count by server_id, logger_name
+| sort -count
+
+## 14. Dashboard de atividade em tempo real
+index=main sourcetype=skip_server_logs 
+| bucket _time span=30s
+| stats count as events by _time, server_id, event_type
+| xyseries _time event_type events
+| fillnull value=0
+
+## 15. Análise de clientes remotos
+index=main sourcetype=skip_server_logs remote_system_id=*
+| stats count as requests, dc(key_id) as unique_keys by server_id, remote_system_id
+| sort -requests
+
+## 16. Comparação de load entre servidores
+index=main sourcetype=skip_server_logs event_type=http_request
+| bucket _time span=1m
+| stats count as requests_per_minute by _time, server_id
+| xyseries _time server_id requests_per_minute
+| fillnull value=0
+
+## 17. Alerting: Servidores com muitos erros
+index=main sourcetype=skip_server_logs log_level=ERROR
+| bucket _time span=5m
+| stats count as error_count by _time, server_id
+| where error_count > 5
+| sort -_time
+
+## 18. Auditoria de chaves por servidor
+index=main sourcetype=skip_server_logs (event_type=key_generation OR event_type=key_retrieval OR event_type=key_zeroization)
+| stats count as total_operations, 
+        sum(eval(if(event_type="key_generation",1,0))) as generated,
+        sum(eval(if(event_type="key_retrieval",1,0))) as retrieved,
+        sum(eval(if(event_type="key_zeroization",1,0))) as zeroized
+  by server_id
+| eval zeroization_percentage = round((zeroized/generated)*100,2)

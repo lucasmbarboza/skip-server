@@ -1,0 +1,112 @@
+# OpenTelemetry + Splunk Queries for SKIP Server
+
+## 1. Ver todos os logs via OpenTelemetry
+index=main sourcetype="otel:logs" 
+
+## 2. Filtrar logs por serviço
+index=main sourcetype="otel:logs" service.name="skip-server"
+
+## 3. Logs por nível de severidade
+index=main sourcetype="otel:logs" severity_text=ERROR
+index=main sourcetype="otel:logs" severity_text=INFO
+index=main sourcetype="otel:logs" severity_text=DEBUG
+
+## 4. Traces de requisições HTTP
+index=main sourcetype="otel:traces" span.kind=server http.method=*
+
+## 5. Análise de performance de endpoints
+index=main sourcetype="otel:traces" span.kind=server
+| stats avg(duration) as avg_duration, count as request_count by http.route, http.method
+| sort -avg_duration
+
+## 6. Traces de operações de banco de dados
+index=main sourcetype="otel:traces" db.system=mysql
+| stats avg(duration) as avg_db_duration, count as db_operations by db.statement
+| sort -avg_db_duration
+
+## 7. Timeline de atividades por serviço
+index=main sourcetype="otel:logs" service.name=*
+| timechart span=1m count by service.name
+
+## 8. Distributed tracing - requisições completas
+index=main sourcetype="otel:traces" 
+| eval trace_duration=if(parent_span_id="", duration, null())
+| stats values(span.name) as operations, 
+        max(trace_duration) as total_duration,
+        count as span_count 
+  by trace_id
+| where isnotnull(total_duration)
+| sort -total_duration
+
+## 9. Análise de erros com contexto
+index=main sourcetype="otel:logs" severity_text=ERROR
+| eval error_context=coalesce(body, message)
+| stats count as error_count, 
+        values(error_context) as error_messages,
+        values(service.name) as services
+  by resource.attributes.service.name
+| sort -error_count
+
+## 10. Monitoramento de chaves criptográficas
+index=main sourcetype="otel:logs" (body="*KEY_GENERATED*" OR body="*KEY_RETRIEVED*" OR body="*KEY_ZEROIZED*")
+| rex field=body "(?<action>KEY_\w+) \| key_id=(?<key_id>\w+)"
+| stats count as operations by action, service.name
+| xyseries service.name action operations
+
+## 11. Análise de latência por percentil
+index=main sourcetype="otel:traces" span.kind=server http.route=*
+| stats perc50(duration) as p50, 
+        perc90(duration) as p90, 
+        perc95(duration) as p95, 
+        perc99(duration) as p99,
+        avg(duration) as avg
+  by http.route
+| sort -p99
+
+## 12. Correlação de logs e traces
+index=main (sourcetype="otel:logs" OR sourcetype="otel:traces")
+| eval event_type=if(sourcetype="otel:logs", "log", "trace")
+| stats count by event_type, trace_id
+| where count > 1
+| sort -count
+
+## 13. Análise de recursos do sistema
+index=main sourcetype="otel:logs" 
+| stats count as log_count by resource.attributes.service.name, 
+                                resource.attributes.service.version,
+                                resource.attributes.deployment.environment
+| sort -log_count
+
+## 14. Detecção de anomalias em requisições
+index=main sourcetype="otel:traces" span.kind=server
+| bucket _time span=5m
+| stats count as requests, avg(duration) as avg_latency by _time, http.route
+| eval anomaly=if(avg_latency > 1000 OR requests > 100, "HIGH", "NORMAL")
+| where anomaly="HIGH"
+| sort -_time
+
+## 15. Dashboard de saúde do serviço
+index=main sourcetype="otel:*" service.name="skip-server"
+| eval metric_type=case(
+    sourcetype="otel:logs" AND severity_text="ERROR", "errors",
+    sourcetype="otel:traces" AND span.kind="server", "requests",
+    sourcetype="otel:logs", "logs",
+    1=1, "other"
+)
+| bucket _time span=1m
+| stats count by _time, metric_type
+| xyseries _time metric_type count
+| fillnull value=0
+
+## 16. Auditoria completa de chaves com traces
+index=main (sourcetype="otel:logs" body="*KEY_*" OR sourcetype="otel:traces" span.name="*key*")
+| eval event_type=if(sourcetype="otel:logs", "log_event", "trace_span")
+| eval key_operation=case(
+    match(body, "KEY_GENERATED"), "generation",
+    match(body, "KEY_RETRIEVED"), "retrieval", 
+    match(body, "KEY_ZEROIZED"), "zeroization",
+    match(span.name, "key"), "key_operation",
+    1=1, "other"
+)
+| stats count by key_operation, event_type, service.name
+| sort -count

@@ -10,14 +10,14 @@ class SKIPConfig:
     """
 
     # Configurações básicas do servidor
-    HOST = '127.0.0.1'  # Bind interno - TLS terminado pelo stunnel
+    HOST = '0.0.0.0'  # Bind em todas as interfaces para aceitar conexões do Docker
     PORT = 8080  # Porta interna (stunnel faz proxy para 8443)
     DEBUG = False
 
     # Configurações do Key Provider
     LOCAL_SYSTEM_ID = os.getenv('SKIP_LOCAL_SYSTEM_ID', 'KP_QuIIN_Server')
     REMOTE_SYSTEM_IDS = [
-        os.getenv('SKIP_REMOTE_SYSTEM_ID_1', 'KP_QuIIN_Client'),
+        os.getenv('SKIP_REMOTE_SYSTEM_ID', 'KP_QuIIN_Client'),
     ]
 
     # Algoritmos suportados (RFC SKIP Table 1)
@@ -38,15 +38,18 @@ class SKIPConfig:
     LOG_LEVEL = "INFO"
     LOG_FILE = "/var/log/skip/skip_server.log"
 
-
-
     # Configurações de Sincronização entre Key Providers
-    MYSQL_ROOT_PASSWORD = os.getenv('MYSQL_ROOT_PASSWORD', 'your_root_password_here')  
-    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'my_database_name')            # Nome do seu banco de dados
-    MYSQL_USER = os.getenv('MYSQL_USER', 'my_user')                         # Nome do usuário do banco de dados
+    MYSQL_ROOT_PASSWORD = os.getenv(
+        'MYSQL_ROOT_PASSWORD', 'your_root_password_here')
+    # Nome do seu banco de dados
+    MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'my_database_name')
+    # Nome do usuário do banco de dados
+    MYSQL_USER = os.getenv('MYSQL_USER', 'my_user')
     MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'my_user_password_here')
-    MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')                     # Host do banco de dados
-    MYSQL_PORT = os.getenv('MYSQL_PORT', 3306)                            # Porta do banco de dados
+    # Host do banco de dados
+    MYSQL_HOST = os.getenv('MYSQL_HOST', '127.0.0.1')
+    # Porta do banco de dados
+    MYSQL_PORT = os.getenv('MYSQL_PORT', 3306)
 
     # Validação de configuração
 
