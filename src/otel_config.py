@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.trace import Status, StatusCode, SpanKind
 
 
 def setup_otel(service_name: str = "skip-server", service_version: str = "1.0.0"):
@@ -70,15 +71,66 @@ def create_custom_log_handler():
 
             try:
                 tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("app_log") as span:
+
+                # Determine span kind and name based on logger and content
+                span_kind = SpanKind.INTERNAL
+                span_name = "app_log"
+
+                if "flask" in record.name.lower() or "werkzeug" in record.name.lower():
+                    span_kind = SpanKind.SERVER
+                    span_name = "flask_log"
+                elif "sqlalchemy" in record.name.lower() or "mysql" in record.getMessage().lower():
+                    span_kind = SpanKind.CLIENT
+                    span_name = "database_log"
+                elif "skip_server" in record.name or "endpoint" in record.getMessage().lower():
+                    span_kind = SpanKind.SERVER
+                    span_name = "skip_server_log"
+
+                with tracer.start_as_current_span(span_name, kind=span_kind) as span:
+                    # Set comprehensive attributes
                     span.set_attribute("log.level", record.levelname)
+                    span.set_attribute("log.logger_name", record.name)
                     span.set_attribute("log.message", record.getMessage())
-                    span.set_attribute("log.logger", record.name)
                     span.set_attribute("log.timestamp", record.created)
                     span.set_attribute("log.application", "skip-server")
+                    span.set_attribute("log.module", record.module if hasattr(
+                        record, 'module') else "unknown")
+                    span.set_attribute("log.function", record.funcName if hasattr(
+                        record, 'funcName') else "unknown")
+                    span.set_attribute(
+                        "log.line_number", record.lineno if hasattr(record, 'lineno') else 0)
+
+                    # Add file path if available
                     if hasattr(record, 'pathname'):
-                        span.set_attribute("log.file", record.pathname)
-                        span.set_attribute("log.line", record.lineno)
+                        span.set_attribute("log.file_path", record.pathname)
+
+                    # Set status based on log level with descriptive messages
+                    if record.levelno >= logging.ERROR:
+                        span.set_status(
+                            Status(StatusCode.ERROR, f"Error logged: {record.levelname}"))
+                        span.set_attribute("log.severity", "error")
+                    elif record.levelno >= logging.WARNING:
+                        span.set_status(
+                            Status(StatusCode.OK, f"Warning logged: {record.levelname}"))
+                        span.set_attribute("log.severity", "warning")
+                    elif record.levelno >= logging.INFO:
+                        span.set_status(
+                            Status(StatusCode.OK, f"Info logged: {record.levelname}"))
+                        span.set_attribute("log.severity", "info")
+                    else:
+                        span.set_status(
+                            Status(StatusCode.OK, f"Debug logged: {record.levelname}"))
+                        span.set_attribute("log.severity", "debug")
+
+                    # Add exception info if present
+                    if record.exc_info:
+                        span.set_attribute(
+                            "log.exception.type", record.exc_info[0].__name__)
+                        span.set_attribute(
+                            "log.exception.message", str(record.exc_info[1]))
+                        span.set_status(
+                            Status(StatusCode.ERROR, f"Exception in log: {record.exc_info[1]}"))
+
             except Exception:
                 pass  # Don't break logging if OTEL fails
 

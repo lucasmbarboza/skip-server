@@ -133,7 +133,7 @@ def after_request(response):
         response_data = "[binary-data]"
 
     logger.debug(
-        f"RESPONSE | status_code={response.status_code} | content_length={response.content_length} | endpoint={request.endpoint if request.endpoint else 'unknown'} | data={response_data}")
+        f"RESPONSE | status_code={response.status_code} | content_length={response.content_length} | endpoint={request.endpoint if request.endpoint else 'unknown'}")
     return response
 
 # Additional endpoint for service health check (not required by RFC)
