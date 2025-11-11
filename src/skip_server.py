@@ -4,6 +4,9 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from skip_config import get_config
+import requests
+import json
+
 
 # This is a simplified implementation of a SKIP server. The entire key synchronization part between KPs must be implemented separately. For simplicity, keys here are generated using the secrets library and stored in memory. In a production environment, persistent and secure storage would be necessary, along with synchronization mechanisms between multiple Key Providers.
 
@@ -81,6 +84,50 @@ synchronizer = None
 sync_loop = None
 
 
+def generate_secure_key(key_size: int) -> str:
+    """Generate a secure random key of specified size in bits"""
+    num_bytes = key_size // 8
+    key_bytes = secrets.token_bytes(num_bytes)
+    key_hex = key_bytes.hex()
+    return key_hex
+
+
+def get_qrng_key(key_size: int):
+    url = "https://api.qrng.outshift.com/api/v1/random_numbers"
+
+    payload = json.dumps({
+        "encoding": "raw",
+        "format": "all",
+        "bits_per_block": key_size,
+        "number_of_blocks": 1
+    })
+    headers = {
+        'Content-Type': 'application/json',
+        'x-id-api-key': config.QRNG_API_KEY
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+
+    if response.status_code == 200:
+        random_numbers = response.json()
+        if random_numbers:
+            logger.info(
+                f"Random numbers received from QRNG")
+            return random_numbers['random_numbers'][0]['hexadecimal']
+        else:
+            key_hex = generate_secure_key(key_size)
+            logger.info(f"Generated fallback key using secrets library")
+            return key_hex
+    else:
+        logger.error(
+            f"Error fetching QRNG bytes: {response.status_code} - {response.text}")
+        key_hex = generate_secure_key(key_size)
+        logger.info(f"Generated fallback key using secrets library")
+
+        return key_hex
+
+
+######
 def json_response(data, status_code=200):
     """
     Creates JSON response with properly configured UTF-8 charset
@@ -213,8 +260,7 @@ def get_new_key():
 
     try:
         # Generate secure key
-        key_bytes = secrets.token_bytes(key_size // 8)
-        key_hex = key_bytes.hex()
+        key_hex = get_qrng_key(key_size)
 
         # Generate 128-bit keyId (RFC default) in hex format
         key_id_bytes = secrets.token_bytes(16)  # 128 bits / 8 = 16 bytes

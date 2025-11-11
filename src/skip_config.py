@@ -51,6 +51,7 @@ class SKIPConfig:
     # Porta do banco de dados
     MYSQL_PORT = os.getenv('MYSQL_PORT', 3306)
 
+    QRNG_API_KEY = os.getenv('QRNG_API_KEY',  ',U-2g704XW7N8h4,2Mniaac7Qwe+tCD6O1>isjZV<KF0UB!}ipv,>(}5!038[}K+')
     # Validação de configuração
 
     @classmethod
