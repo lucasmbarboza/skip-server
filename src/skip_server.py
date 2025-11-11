@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 synchronizer = None
 sync_loop = None
 
+# MODIFICAR AQUI PARA ADICIONAR O QRNG
+def generate_key(size_bits):
+    """
+    Gera uma chave segura de tamanho especificado em bits
+    """
+    key_bytes = secrets.token_bytes(size_bits // 8)
+    return key_bytes.hex()
+
 
 def json_response(data, status_code=200):
     """
@@ -149,8 +157,9 @@ def get_new_key():
 
     try:
         # Gerar chave segura
-        key_bytes = secrets.token_bytes(key_size // 8)
-        key_hex = key_bytes.hex()
+        # key_bytes = secrets.token_bytes(key_size // 8)
+        # key_hex = key_bytes.hex()
+        key_hex = generate_key(key_size)
 
         # Gerar keyId de 128 bits (padrão RFC) em formato hex
         key_id_bytes = secrets.token_bytes(16)  # 128 bits / 8 = 16 bytes
