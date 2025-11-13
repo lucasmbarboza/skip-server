@@ -4,6 +4,7 @@ import uuid
 import logging
 from datetime import datetime, timedelta
 from skip_config import get_config
+import requests
 
 # Essa é uma implementação simplificada de um servidor SKIP toda a parte de sincronização de chaves entre os KP deve ser implementada a parte. Por simplicidade as chaves aqui são geradas a biblioteque secrets e armazenadas em memória. Em um ambiente de produção, seria necessário um armazenamento persistente e seguro, além de mecanismos de sincronização entre múltiplos Key Providers.
 
@@ -34,13 +35,48 @@ logger = logging.getLogger(__name__)
 synchronizer = None
 sync_loop = None
 
-# MODIFICAR AQUI PARA ADICIONAR O QRNG
-def generate_key(size_bits):
+# API QRNG-SQLCipher
+def generate_key(size_bits, base_url="http://192.168.71.15:8081"):
     """
-    Gera uma chave segura de tamanho especificado em bits
+    Solicita uma chave parcial (slice_hex) da API QRNG-SQLCipher.
+
+    Params:
+        size_bits (int): tamanho da chave desejada (8–2048, múltiplo de 8)
+        base_url (str): URL base da API 
+                        (default = http://192.168.71.15:8081)
+
+    Returns:
+        str: slice_hex retornado pela API
+
+    Raises:
+        ValueError: se size_bits estiver fora do intervalo
+        RuntimeError: problemas de conexão ou erro da API
     """
-    key_bytes = secrets.token_bytes(size_bits // 8)
-    return key_bytes.hex()
+    # Validação local
+    if size_bits <= 0 or size_bits % 8 != 0 or size_bits > 2048:
+        raise ValueError("size_bits deve estar entre 8 e 2048 e ser múltiplo de 8.")
+
+    url = f"{base_url}/keys/pop"
+    params = {"size_bits": size_bits}
+
+    try:
+        resp = requests.post(url, params=params, timeout=5)
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Erro ao conectar na API em {base_url}: {e}") from e
+
+    # Erro HTTP da API
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Erro da API ({resp.status_code}): {resp.text}"
+        )
+
+    data = resp.json()
+
+    # Conferir se veio o campo correto
+    if "slice_hex" not in data:
+        raise RuntimeError(f"Resposta inesperada da API: {data}")
+
+    return data["slice_hex"]
 
 
 def json_response(data, status_code=200):
