@@ -4,3 +4,4 @@ cryptography>=3.4.0
 dataclasses>=0.6; python_version<"3.7"
 flask_sqlalchemy
 mysql-connector-python
+requests
